@@ -1,0 +1,37 @@
+FROM python:3.11.16-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
+
+COPY common /app/common
+COPY agent /app/agent
+COPY VERSION /app/VERSION
+COPY config/model.env /app/config/model.env
+COPY agent/airgap_entrypoint.sh /app/agent/airgap_entrypoint.sh
+
+# The local model server, from the same digest-pinned image the stack's bundled
+# Ollama uses: the airgap verifier needs it answering inside --network none.
+COPY --from=ollama/ollama:0.35.0@sha256:2a6e883b917fc543389599dae79918f5cac9e1438890506982f44aa4f5625d01 /usr/bin/ollama /usr/local/bin/ollama
+
+RUN mkdir -p /app/config \
+    && echo "airgap: true" > /app/config/agent.yaml
+
+RUN chmod +x /app/agent/airgap_entrypoint.sh \
+    && useradd --create-home --uid 1000 agent \
+    && mkdir -p /data /data/preload /data/logs \
+    && chown -R agent:agent /data
+
+ENV DATA_DIR=/data
+ENV AIRGAP=true
+ENV OLLAMA_URL=http://127.0.0.1:11434
+
+USER agent
+
+ENTRYPOINT ["/app/agent/airgap_entrypoint.sh"]
+
+CMD ["python3", "-m", "agent.security.airgap"]

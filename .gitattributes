@@ -1,0 +1,4 @@
+# The images are Linux: every text file checks out with LF on every OS, so a
+# script run through its shebang never carries "#!/bin/sh\r" into a container
+# (core.autocrlf=true on a Windows clone would otherwise convert it).
+* text=auto eol=lf

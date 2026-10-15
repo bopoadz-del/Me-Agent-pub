@@ -1,0 +1,18 @@
+.env
+/data/
+*.db
+*.sqlite
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+domain-kits/generated/*
+!domain-kits/generated/.gitkeep
+tests/generated/*
+!tests/generated/.gitkeep
+
+# tests/fixtures/preload/memory.sqlite is built at run time (build_memory_sqlite.py)
+
+*.egg-info/
+tmp_*/
+

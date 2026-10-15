@@ -1,0 +1,100 @@
+services:
+  hive-server:
+    build:
+      context: .
+      dockerfile: hive/Dockerfile
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      HIVE_JWT_KEY: ${HIVE_JWT_KEY}
+      DATA_DIR: /data
+      # The image serves on $PORT (default 10000) but this file publishes and
+      # healthchecks 8001 -- without this the service is unreachable on both.
+      PORT: 8001
+      # hive_docker_entrypoint.sh runs enroll_bootstrap_agent.py before uvicorn and
+      # exits non-zero without these, so the container never starts. The values
+      # must match the agent's AGENT_ID / AGENT_SECRET: the script pre-enrols that
+      # pair into hive.db, and the agent authenticates with it.
+      BOOTSTRAP_AGENT_ID: ${AGENT_ID:-agent-1}
+      BOOTSTRAP_AGENT_SECRET: ${AGENT_SECRET}
+    volumes:
+      - hive-data:/data
+    user: "agent"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # The CI stack's own Ollama. Off by default: the local stack uses the Ollama
+  # server already on the host and never starts a second one. CI runs
+  # `docker compose --profile bundled-ollama up`.
+  ollama:
+    profiles: ["bundled-ollama"]
+    image: ollama/ollama:0.35.0@sha256:2a6e883b917fc543389599dae79918f5cac9e1438890506982f44aa4f5625d01
+    volumes:
+      - ollama-data:/root/.ollama
+    env_file:
+      - config/model.env
+    environment:
+      OLLAMA_KEEP_ALIVE: "-1"
+    healthcheck:
+      # Healthy only once the model is pulled and loaded. Uses the ollama CLI:
+      # the image does not ship curl.
+      test: ["CMD-SHELL", "test -f /tmp/model-ready && ollama list"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        pid=$$!
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        ollama pull "$$OLLAMA_MODEL"
+        # Load the weights once so the first mission step does not spend its
+        # timeout budget on a cold load (OLLAMA_KEEP_ALIVE keeps them resident).
+        ollama run "$$OLLAMA_MODEL" "ready" >/dev/null
+        touch /tmp/model-ready
+        wait $$pid
+    restart: unless-stopped
+
+  agent-instance:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      AGENT_ID: ${AGENT_ID:-agent-1}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN}
+      AGENT_SECRET: ${AGENT_SECRET}
+      HIVE_URL: http://hive-server:8001
+      # The local Ollama server on the host (owner ruling 4). CI points this at
+      # its bundled server: OLLAMA_URL=http://ollama:11434.
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      DATA_DIR: /data
+    env_file:
+      # OLLAMA_MODEL: the one place the model is named.
+      - config/model.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - agent-data:/data
+    user: "agent"
+    depends_on:
+      hive-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  hive-data:
+  agent-data:
+  ollama-data:

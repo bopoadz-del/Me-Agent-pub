@@ -1,0 +1,43 @@
+.PHONY: build up down test test-unit test-integration test-e2e compile-domain verify-airgap detect clean mutation-gate
+
+build:
+	docker compose build
+
+up:
+	sh scripts/local_up.sh
+
+down:
+	sh scripts/local_down.sh
+
+detect:
+	python3 scripts/stub_detector.py
+	python3 scripts/secret_scan.py
+
+test-unit:
+	python3 -m pytest tests/unit/ -v
+
+test-integration:
+	python3 -m pytest tests/integration/ -v -m "not airgap"
+
+test-e2e:
+	python3 -m pytest tests/e2e/ -v
+
+test: detect test-unit test-integration test-e2e
+
+compile-domain:
+	python3 -m domain_kits.compiler.engine --sheet domain-kits/sheets/port_ops.yaml
+
+# Phase B: runs in CI (job "Phase B verify-airgap"). Needs Linux + Docker.
+verify-airgap:
+	python3 tests/fixtures/preload/build_memory_sqlite.py
+	docker build -f agent/Dockerfile.airgap -t self_agent_airgap .
+	docker run --rm --network none -e AIRGAP=true \
+		-v $(PWD)/tests/fixtures/preload:/data/preload \
+		self_agent_airgap python3 -m agent.security.airgap
+
+mutation-gate:
+	python3 scripts/mutation_gate.py --targets \
+		agent/orchestrator/engine.py agent/swarm/spawner.py hive/sync.py
+
+clean:
+	find . -type d -name "__pycache__" -exec rm -rf {} +

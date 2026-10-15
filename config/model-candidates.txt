@@ -1,0 +1,12 @@
+# Candidate models for the bake-off (.github/workflows/model-bakeoff.yml).
+# Not the model in use -- that is config/model.env. The bake-off picks the
+# strongest candidate that passes every evidence mission inside the step
+# timeout on the CI runner; the winner is then written to config/model.env.
+# Bake-off on the merged Phase 1 code (run 38014617632, 2026-10-10):
+#   llama3.2:3b  6/6 + refusal, slowest step 21.4 s   <- chosen
+#   qwen2.5:3b   5/6, slowest step 46.3 s
+#   qwen2.5:7b   3/6, three steps hit the 60 s step timeout
+# Dropped: phi3.5 (first bake-off: 5 of 6 missions failed, slowest step 60.1 s).
+llama3.2:3b
+qwen2.5:3b
+qwen2.5:7b

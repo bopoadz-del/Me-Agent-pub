@@ -1,0 +1,57 @@
+{
+  "_doc": "Live E2E evidence missions (spec 11.4 step 7, owner task M-PHASE-1-CLOSE step 4). Synthetic documents that differ in layout, row position and wording. Each mission must return the expected row with every value cited verbatim. Data, not code: add a case here, never a branch in the checker.",
+  "missions": [
+    {
+      "id": "prose-single-line",
+      "natural_language": "Calculate berth fee for a dry container using attached tariff evidence",
+      "documents": {"tariff.txt": "Container type: dry. Dwell hours: 24. Base rate: 10 USD/hr.\n"},
+      "expect": {"base_rate_usd_per_hour": 10, "berth_fee_usd": 240}
+    },
+    {
+      "id": "csv-middle-row",
+      "natural_language": "Calculate berth fee for a reefer container using attached tariff evidence",
+      "documents": {
+        "tariffs.csv": "container_type,base_rate_usd_per_hour,currency\ndry,10,USD\nreefer,18.5,USD\nhazardous,27,USD\n",
+        "booking.txt": "Booking B-118. Dwell hours: 30.\n"
+      },
+      "expect": {"base_rate_usd_per_hour": 18.5, "berth_fee_usd": 555}
+    },
+    {
+      "id": "notice-last-row",
+      "natural_language": "Calculate berth fee for a hazardous container using attached tariff evidence",
+      "documents": {
+        "notice.txt": "Port tariff notice.\nDry containers are charged a base rate of 10 USD per hour.\nReefer containers are charged a base rate of 18.5 USD per hour.\nHazardous containers are charged a base rate of 27 USD per hour.\nThe vessel recorded 12 dwell hours at the berth.\n"
+      },
+      "expect": {"base_rate_usd_per_hour": 27, "berth_fee_usd": 324}
+    },
+    {
+      "id": "pipe-table",
+      "natural_language": "Calculate berth fee for a reefer container using attached tariff evidence",
+      "documents": {
+        "schedule.md": "| container_type | base_rate_usd_per_hour | currency |\n| reefer | 18.5 | USD |\n| dry | 10 | USD |\n",
+        "stay.txt": "Dwell hours: 8.\n"
+      },
+      "expect": {"base_rate_usd_per_hour": 18.5, "berth_fee_usd": 148}
+    },
+    {
+      "id": "semicolon-reordered-columns",
+      "natural_language": "Calculate berth fee for a dry container using attached tariff evidence",
+      "documents": {
+        "rates.csv": "currency;base_rate_usd_per_hour;container_type\nUSD;27;hazardous\nUSD;18.5;reefer\nUSD;10;dry\n",
+        "visit.txt": "Gate log: dwell hours 5 for this visit.\n"
+      },
+      "expect": {"base_rate_usd_per_hour": 10, "berth_fee_usd": 50}
+    },
+    {
+      "id": "reworded-rate",
+      "natural_language": "Calculate berth fee for a dry container using attached tariff evidence",
+      "documents": {
+        "terms.txt": "Hourly berth rate in USD per hour for dry boxes: 10.\nTime alongside: 6 dwell hours.\n"
+      },
+      "expect": {"base_rate_usd_per_hour": 10, "berth_fee_usd": 60}
+    }
+  ],
+  "refusal": {
+    "natural_language": "Calculate berth fee for a dry container using attached tariff evidence"
+  }
+}

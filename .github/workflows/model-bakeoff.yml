@@ -1,0 +1,95 @@
+name: Model bake-off
+
+# Picks the model for config/model.env: the strongest one the CI runner can
+# run with every evidence mission passing inside the step timeout. Each matrix
+# leg rewrites the one config value, brings the stack up the owner's way and
+# runs the same live E2E as the merge gate. Runs on demand, or on a push whose
+# commit message contains [bakeoff].
+on:
+  workflow_dispatch:
+  push:
+    branches: ["pr/**"]
+
+jobs:
+  candidates:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[bakeoff]')
+    runs-on: ubuntu-latest
+    outputs:
+      models: ${{ steps.list.outputs.models }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        # The candidates live in config/model-candidates.txt, not in this file.
+        run: |
+          models=$(grep -v '^\s*#' config/model-candidates.txt | grep -v '^\s*$' | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin]))')
+          echo "models=$models" >> "$GITHUB_OUTPUT"
+
+  bakeoff:
+    needs: candidates
+    name: ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        model: ${{ fromJSON(needs.candidates.outputs.models) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install httpx (checker dependency)
+        run: pip install httpx
+
+      - name: Generate stack credentials
+        run: |
+          jwt=$(openssl rand -hex 32); token=$(openssl rand -hex 32); secret=$(openssl rand -hex 32)
+          echo "::add-mask::$jwt"; echo "::add-mask::$token"; echo "::add-mask::$secret"
+          {
+            echo "HIVE_JWT_KEY=$jwt"
+            echo "AGENT_API_TOKEN=$token"
+            echo "AGENT_SECRET=$secret"
+            echo "AGENT_ID=agent-e2e"
+          } >> "$GITHUB_ENV"
+
+      - name: Name the candidate in config/model.env
+        env:
+          MODEL: ${{ matrix.model }}
+        run: |
+          sed -i "s|^OLLAMA_MODEL=.*|OLLAMA_MODEL=$MODEL|" config/model.env
+          grep '^OLLAMA_MODEL=' config/model.env
+
+      - name: make up (bundled Ollama)
+        env:
+          COMPOSE_PROFILES: bundled-ollama
+          OLLAMA_URL: http://ollama:11434
+        run: make up
+
+      - name: Every evidence mission + the refusal
+        env:
+          COMPOSE_PROFILES: bundled-ollama
+        # bash without pipefail let `checker | tee` report success on a failed
+        # checker: every leg of the first bake-off read green.
+        shell: bash -eo pipefail {0}
+        run: |
+          python scripts/live_e2e_check.py \
+            --base-url http://localhost:8000 \
+            --token "$AGENT_API_TOKEN" \
+            --timeout 900 | tee checker.log
+          echo "## ${{ matrix.model }}" >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(timing|slowest|LIVE E2E|  - )' checker.log >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Summary on failure
+        if: failure()
+        run: |
+          echo "## ${{ matrix.model }} (FAILED)" >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(timing|slowest|LIVE E2E|  - )' checker.log >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Tear down
+        if: always()
+        env:
+          COMPOSE_PROFILES: bundled-ollama
+        run: docker compose down -v
