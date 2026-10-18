@@ -1,4 +1,4 @@
-.PHONY: build up run downtest test-unit test-integration test-e2e compile-domain verify-airgap detect clean mutation-gate
+.PHONY: build up run down test test-unit test-integration test-e2e compile-domain verify-airgap detect clean mutation-gate
 
 build:
 	docker compose build
