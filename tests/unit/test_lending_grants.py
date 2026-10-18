@@ -153,5 +153,7 @@ def test_every_route_has_an_access_row(agent):
               if m not in ("HEAD", "OPTIONS") and not r.path.startswith(("/docs", "/openapi", "/redoc"))}
     missing = served - set(lending.ROUTE_ACCESS)
     assert not missing, sorted(missing)
+    stale = set(lending.ROUTE_ACCESS) - served
+    assert not stale, sorted(stale)
     allowed = {"public", "owner", *lending.SCOPES}
     assert set(lending.ROUTE_ACCESS.values()) <= allowed

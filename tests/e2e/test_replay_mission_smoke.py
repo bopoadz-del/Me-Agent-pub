@@ -52,11 +52,11 @@ def agent(tmp_path, monkeypatch):
         runtime["comms"].stop()
 
 
-def _run(client, body: dict, timeout_s: float = 180.0) -> dict:
-    mission_id = client.post("/mission", json=body, headers=AUTH).json()["mission_id"]
+def _run(client, body: dict, timeout_s: float = 180.0, auth: dict = AUTH) -> dict:
+    mission_id = client.post("/mission", json=body, headers=auth).json()["mission_id"]
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        r = client.get(f"/mission/{mission_id}", headers=AUTH)
+        r = client.get(f"/mission/{mission_id}", headers=auth)
         if r.status_code == 200 and r.json().get("result") is not None:
             return r.json()["result"]
         time.sleep(0.5)
@@ -100,3 +100,30 @@ def test_the_same_mission_without_evidence_is_refused(agent):
     result = _run(client, {"natural_language": MISSION, "domain_hint": "port_terminal", "attached_evidence": []})
     assert result["status"] == "failure" and result["confidence"] == 0.0 and result["citations"] == []
     assert "evidence" in " ".join(str(o["output"].get("reason", "")) for o in result["outputs"]).lower()
+
+
+def test_a_borrowed_mission_runs_end_to_end_on_the_borrowers_own_evidence(agent):
+    """Lending slice 1 (issue #12): intake -> decision -> evidence record. The
+    owner lends, the borrower redeems, uploads its evidence and runs the
+    mission; the result is grounded on the borrower's own lines. Revoking the
+    grant ends the borrower's access."""
+    client, data = agent
+    lent = client.post("/lend", headers=AUTH, json={
+        "borrower": "visiting team",
+        "scopes": ["mission:submit", "mission:read", "evidence:upload", "evidence:read"],
+        "domains": ["port_terminal"], "ttl_seconds": 3600, "max_missions": 2}).json()
+    borrower = {"Authorization": "Bearer " + client.post(
+        "/lend/redeem", json={"code": lent["redeem_code"]}).json()["token"]}
+    upload = client.post("/evidence/tariff.txt", content=TARIFF.encode("utf-8"), headers=borrower)
+    assert upload.status_code == 200, upload.text
+    path = Path(upload.json()["path"]).resolve()
+    assert path.is_relative_to((data / "evidence" / f"grant-{lent['grant_id']}").resolve())
+    result = _run(client, {
+        "natural_language": MISSION, "domain_hint": "port_terminal",
+        "attached_evidence": [{"type": "txt", "path": str(path)}],
+    }, auth=borrower)
+    assert result["status"] == "success", result
+    assert result["citations"] and all(c["excerpt"] in TARIFF for c in result["citations"])
+    assert 240 in _passed_values(result, "berth_fee_usd")
+    assert client.post(f"/lend/{lent['grant_id']}/revoke", headers=AUTH).status_code == 200
+    assert client.get("/evidence", headers=borrower).status_code == 401
