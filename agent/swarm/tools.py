@@ -105,6 +105,8 @@ def intake_evidence(items: list[dict[str, Any]], mission_id: str) -> list[dict[s
 
 #: One plain file name: no directory part, no leading dot or dash.
 _UPLOAD_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+#: Names a filesystem reserves for devices, with or without an extension.
+_DEVICE_NAME = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)
 
 
 def store_upload(name: str, data: bytes) -> Path:
@@ -116,7 +118,7 @@ def store_upload(name: str, data: bytes) -> Path:
     outside DATA_DIR/evidence."""
     import uuid
 
-    if not _UPLOAD_NAME.fullmatch(name):
+    if not _UPLOAD_NAME.fullmatch(name) or _DEVICE_NAME.fullmatch(name):
         raise ValueError(f"evidence name must be one plain file name: {name!r}")
     if not data:
         raise ValueError("evidence document is empty")
