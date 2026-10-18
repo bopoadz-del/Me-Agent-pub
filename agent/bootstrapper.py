@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import threading
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -20,7 +21,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from agent import lending
+from agent import lending, metering
 from agent.comms import CommsLink
 from agent.memory import LocalStore, Retriever, SyncEngine
 from agent.orchestrator.engine import HeadlessOrchestrator, disk_over_limit
@@ -36,7 +37,7 @@ from common.http_limits import REQUEST_BODY_MAX_BYTES, BodySizeLimit
 from common.logging import OPERATIONAL_CONSTRAINTS, get_logger
 from agent.model_server import ModelServerGate
 from common.models.llm_client import MockLLMClient, OllamaClient, configured_model, replay_client_from_env
-from common.models.schemas import BlockDef, MemoryDelta, MissionProfile, SessionGrant
+from common.models.schemas import BlockDef, ExecutionResult, MemoryDelta, MissionProfile, SessionGrant
 
 _logger = get_logger("agent.bootstrapper")
 _RUNTIME: dict[str, Any] = {}
@@ -370,9 +371,38 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
         runtime["store"].last_profile = profile
         if not comms.enqueue(profile):
             if grant is not None:
-                lending.release_mission(runtime["store"].conn, grant.grant_id, profile.mission_id)
+                conn = runtime["store"].conn
+                lending.release_mission(conn, grant.grant_id, profile.mission_id)
+                now = datetime.now(timezone.utc).isoformat()
+                turned_away = ExecutionResult(mission_id=profile.mission_id, status="failure", outputs=[],
+                                              citations=[], confidence=0.0)
+                metering.record(conn, grant_id=grant.grant_id, mission_id=profile.mission_id, started_at=now,
+                                ended_at=now, result=turned_away, code="refused_by_agent")
             raise HTTPException(status_code=429, detail="queue saturated")
         return {"mission_id": profile.mission_id, "status": "queued"}
+
+    @app.get("/lend/{grant_id}/usage")
+    async def get_lend_usage(
+        grant_id: str,
+        offset: int = 0,
+        limit: Optional[int] = None,
+        grant: Optional[lending.Grant] = Depends(_caller("GET", "/lend/{grant_id}/usage")),
+    ) -> dict[str, Any]:
+        # The owner reads any grant; a borrower only its own, and any other is
+        # simply not there.
+        conn = runtime["store"].conn
+        if grant is not None and grant.grant_id != grant_id:
+            raise HTTPException(status_code=404, detail="no such grant")
+        lending.ensure_schema(conn)
+        if conn.execute("SELECT 1 FROM grants WHERE grant_id = ?", (grant_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail="no such grant")
+        max_page = int(OPERATIONAL_CONSTRAINTS["max_usage_list_page"])
+        limit = max_page if limit is None else limit
+        if offset < 0 or not 1 <= limit <= max_page:
+            raise HTTPException(status_code=422, detail=f"offset >= 0 and 1 <= limit <= {max_page}")
+        items = metering.usage(conn, grant_id, limit=limit, offset=offset)
+        return {"grant_id": grant_id, "items": items, "total": metering.count(conn, grant_id),
+                "offset": offset, "limit": limit}
 
     # {name:path} so a name with a separator reaches the name rule and is refused
     # there (400), the same as every other bad name.

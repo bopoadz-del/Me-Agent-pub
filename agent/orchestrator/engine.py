@@ -186,16 +186,19 @@ class HeadlessOrchestrator:
             )
         if plan.steps[0].block_id == "__refusal__":
             reason = plan.steps[0].prompt_scope
+            # The cause is structured: the borrower's own input (its cost cap,
+            # its missing evidence) or the agent's inability to plan it.
+            cause = "agent"
             if reason == "cost":
-                text = "cost limit exceeded"
+                text, cause = "cost limit exceeded", "input"
             elif reason.startswith("refuse:"):
-                text = f"evidence required: {reason.split(':', 1)[1].strip()}"
+                text, cause = f"evidence required: {reason.split(':', 1)[1].strip()}", "input"
             else:
                 text = reason
             out = StepOutput(
                 step_id=plan.steps[0].step_id,
                 block_id="__refusal__",
-                output={"reason": text},
+                output={"reason": text, "cause": cause},
                 validation_status="failed",
                 execution_time_ms=0,
             )
@@ -240,7 +243,7 @@ class HeadlessOrchestrator:
                 out = StepOutput(
                     step_id=step.step_id,
                     block_id=step.block_id,
-                    output={"reason": f"evidence required: {block.evidence_standard}"},
+                    output={"reason": f"evidence required: {block.evidence_standard}", "cause": "input"},
                     validation_status="failed",
                     execution_time_ms=0,
                 )

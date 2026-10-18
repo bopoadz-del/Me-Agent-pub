@@ -71,6 +71,15 @@ class HiveMessage(BaseModel):
 
 # ── Missions & execution ───────────────────────────────────────────────────────
 
+#: Mission outcome codes (agent/metering.py) and whether each counts against a
+#: grant's mission quota: only customer-caused terminal states count.
+USAGE_OUTCOMES: dict[str, dict[str, Any]] = {
+    "completed": {"counts": True},
+    "refused_input": {"counts": True},
+    "refused_by_agent": {"counts": False},
+    "failed_by_agent": {"counts": False},
+}
+
 #: Size bounds on what the agent and hive accept (operational constraints,
 #: spec Section 10: common.logging.OPERATIONAL_CONSTRAINTS includes them).
 INPUT_BOUNDS = {
@@ -87,6 +96,8 @@ INPUT_BOUNDS = {
     #: How old the hive's grant state may be before the agent refuses hive-issued
     #: borrower tokens (it is refreshed on every heartbeat ack).
     "max_grant_state_age_seconds": 120,
+    #: Largest page GET /lend/{grant_id}/usage returns.
+    "max_usage_list_page": 100,
     "max_memory_value_kb": 256,
 }
 
@@ -139,6 +150,9 @@ class StepOutput(BaseModel):
     output: dict[str, Any]
     validation_status: Literal["passed", "failed", "unchecked"]
     execution_time_ms: int
+    # What the step consumed: tool_calls, model_calls, and model_tokens when
+    # the model adapter reports them (agent/metering.py).
+    usage: dict[str, Any] = Field(default_factory=dict)
 
 class Citation(BaseModel):
     source: str

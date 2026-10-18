@@ -40,6 +40,10 @@ def configured_model(config_path: Optional[Path] = None) -> str:
 
 
 class LLMClient(ABC):
+    #: What the last generate() consumed, {"model_tokens": n}, when the adapter
+    #: reports it; None when it does not.
+    last_usage: Optional[dict[str, int]] = None
+
     @abstractmethod
     def generate(self, prompt: str, system: str, format: Any = "json") -> dict:
         ...
@@ -74,6 +78,12 @@ class OllamaClient(LLMClient):
             response = client.post(f"{self.base_url}/api/generate", json=payload, headers=headers)
             response.raise_for_status()
             body = response.json()
+        prompt_tokens, reply_tokens = body.get("prompt_eval_count"), body.get("eval_count")
+        self.last_usage = (
+            {"model_tokens": int(prompt_tokens) + int(reply_tokens)}
+            if isinstance(prompt_tokens, int) and isinstance(reply_tokens, int)
+            else None
+        )
         raw = body.get("response", "{}")
         if isinstance(raw, dict):
             return raw

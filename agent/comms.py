@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import threading
 from collections import deque
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from common.logging import OPERATIONAL_CONSTRAINTS, get_logger
@@ -138,10 +139,51 @@ class CommsLink:
                 continue
             if not self._wait_for_model_server(profile.mission_id):
                 return
+            self._run_one(profile)
+
+    def _run_one(self, profile: MissionProfile) -> None:
+        """Run one mission to a terminal result, store and report it, and write
+        its usage row if it was borrowed. A mission the agent itself crashes on
+        ends as a failure, not as a dead worker."""
+        started = datetime.now(timezone.utc).isoformat()
+        try:
             plan = self.orchestrator.resolve(profile)
             result = self.orchestrator.execute(plan)
-            self._persist_result(result)
-            self._emit_block_update(result)
+        except Exception as exc:  # noqa: BLE001 - the worker must outlive one mission
+            _logger.error(f"mission {profile.mission_id} failed in the agent: {exc}")
+            result = ExecutionResult(
+                mission_id=profile.mission_id,
+                status="failure",
+                outputs=[
+                    StepOutput(
+                        step_id="worker",
+                        block_id="worker",
+                        output={"reason": f"the agent failed: {exc}", "cause": "agent"},
+                        validation_status="failed",
+                        execution_time_ms=0,
+                    )
+                ],
+                citations=[],
+                confidence=0.0,
+            )
+        ended = datetime.now(timezone.utc).isoformat()
+        self._persist_result(result)
+        self._emit_block_update(result)
+        self._record_usage(profile.mission_id, started, ended, result)
+
+    def _record_usage(self, mission_id: str, started: str, ended: str, result: ExecutionResult) -> None:
+        conn = getattr(getattr(self.orchestrator, "store", None), "conn", None)
+        if conn is None:
+            return
+        try:
+            from agent import lending, metering
+
+            grant_id = lending.mission_grant(conn, mission_id)
+            if grant_id is not None:
+                metering.record(conn, grant_id=grant_id, mission_id=mission_id, started_at=started,
+                                ended_at=ended, result=result)
+        except Exception as exc:  # noqa: BLE001 - a bad write must not kill the worker
+            _logger.error(f"failed to record usage for mission {mission_id}: {exc}")
 
     def _wait_for_model_server(self, mission_id: str) -> bool:
         """Hold the mission while the model server is busy. False when stopping."""

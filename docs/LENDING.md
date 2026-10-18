@@ -114,8 +114,15 @@ longer ago than `max_grant_state_age_seconds`. Quota is counted by the agent.
   the agent the grant names (`common/lending_tokens.py`). The hive and that
   agent already share the secret; the agent verifies its own borrowers'
   tokens, no other agent can, and no agent holds the hive's `HIVE_JWT_KEY`.
-- **Metering.** Counting missions per grant is in scope. Charging for them
-  (`/billing/*`) stays V2.
+- **Metering (built, slice A, #22).** Every borrowed mission writes one
+  append-only usage row (`agent/metering.py`): start and end, steps, tool
+  calls, model calls, model tokens when the adapter reports them, an outcome
+  code and whether it counted. Outcomes and whether each counts are data
+  (`USAGE_OUTCOMES`): only customer-caused terminal states count, and a
+  mission the agent refuses or fails gives its quota slot back.
+  `GET /lend/{grant_id}/usage` shows the owner any grant and a borrower only
+  its own. Slice B adds a per-grant summary and a CSV/JSON export; no payment
+  provider is wired, the export is the contract.
 
 ## Tests to write first, when this is built
 
