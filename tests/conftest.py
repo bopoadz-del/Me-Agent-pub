@@ -35,6 +35,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Modules open their log files under DATA_DIR at import; the images' default
+# (/data) is not writable for a reader running the suite from a fresh clone.
+# An explicit DATA_DIR still wins.
+if not os.environ.get("DATA_DIR"):
+    import tempfile
+
+    os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="me-agent-test-data-")
+
 PRELOAD_STATIC = Path(__file__).resolve().parent / "fixtures" / "preload"
 AGENT_UNDER_TEST = "agent-under-test"
 
