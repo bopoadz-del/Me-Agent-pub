@@ -1,10 +1,15 @@
-.PHONY: build up down test test-unit test-integration test-e2e compile-domain verify-airgap detect clean mutation-gate
+.PHONY: build up run down test test-unit test-integration test-e2e compile-domain verify-airgap detect clean mutation-gate
 
 build:
 	docker compose build
 
 up:
 	sh scripts/local_up.sh
+
+# Docker only: the stack brings its own Ollama, which pulls the model named in
+# config/model.env (the path CI's live job takes).
+run:
+	COMPOSE_PROFILES=bundled-ollama OLLAMA_URL=http://ollama:11434 sh scripts/local_up.sh
 
 down:
 	sh scripts/local_down.sh

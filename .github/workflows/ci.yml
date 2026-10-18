@@ -117,6 +117,27 @@ jobs:
           python -m pytest tests/unit/test_supply_chain.py tests/unit/test_challenge_budget.py
           python -m pytest tests/unit
 
+  compose-builds:
+    # What `make up` and `make run` start: the compose file is valid with and
+    # without the bundled Ollama, and every image builds.
+    name: Compose validates, images build
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # Placeholders: config only interpolates them, nothing is started.
+      HIVE_JWT_KEY: placeholder
+      AGENT_API_TOKEN: placeholder
+      AGENT_SECRET: placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - name: compose config (host Ollama, as make up)
+        run: docker compose config --quiet
+      - name: compose config (bundled Ollama, as make run)
+        run: docker compose --profile bundled-ollama config --quiet
+      - name: build every image
+        run: docker compose --profile bundled-ollama build
+
   phase-b-live-e2e:
     name: Phase B live E2E (spec 11.4 step 7)
     needs: changes
