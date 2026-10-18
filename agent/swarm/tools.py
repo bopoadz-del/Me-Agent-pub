@@ -109,7 +109,7 @@ _UPLOAD_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _DEVICE_NAME = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)
 
 
-def store_upload(name: str, data: bytes) -> Path:
+def store_upload(name: str, data: bytes, under: Optional[str] = None) -> Path:
     """Write one uploaded document into the whitelist, in a directory of its own.
 
     The document must be UTF-8 text, the only thing file_reader reads; a body
@@ -127,9 +127,11 @@ def store_upload(name: str, data: bytes) -> Path:
         raise ValueError(f"evidence document larger than {max_bytes} bytes")
     data.decode("utf-8")
     root = _allowed_evidence_roots()[0]
-    target_dir = (root / f"upload-{uuid.uuid4().hex}").resolve()
+    # ``under`` is a caller's own directory inside the whitelist (a grant's).
+    base = (root / under).resolve() if under else root
+    target_dir = (base / f"upload-{uuid.uuid4().hex}").resolve()
     target = (target_dir / name).resolve()
-    if target_dir.parent != root or target.parent != target_dir:
+    if (base != root and base.parent != root) or target_dir.parent != base or target.parent != target_dir:
         raise ValueError(f"evidence upload would leave its directory: {name!r}")
     target_dir.mkdir(parents=True)
     target.write_bytes(data)

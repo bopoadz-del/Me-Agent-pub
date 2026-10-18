@@ -12,9 +12,13 @@ asymmetric signing described under "Open decisions", is a later slice.
 - Part A, built: `POST /lend` (owner only), `POST /lend/redeem` (the code
   once, for a borrower token), `POST /lend/{grant_id}/revoke` (owner only,
   advances the epoch), and the route-to-scope table, which covers every route.
-  Borrower tokens open no data route yet.
-- Part B, next: borrower access to the mission and evidence routes, with
-  per-grant isolation, domain and quota checks.
+- Part B, built: a borrower token opens a data route when its grant carries
+  that route's scope. Uploads land in `DATA_DIR/evidence/grant-<id>/`, and a
+  borrower lists and fetches only that directory. A mission must name a domain
+  the grant allows, may attach only the grant's evidence, and counts against
+  the quota. A borrower reads back only its own grant's missions. Tokens are
+  signed with a key derived from the owner token, and a grant's domains must
+  be kits the agent has loaded.
 
 ## What lending means
 
