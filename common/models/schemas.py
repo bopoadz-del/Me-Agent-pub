@@ -84,6 +84,9 @@ INPUT_BOUNDS = {
     "max_grant_missions": 1000,
     "max_grant_domains": 20,
     "borrower_token_ttl_seconds": 3600,
+    #: How old the hive's grant state may be before the agent refuses hive-issued
+    #: borrower tokens (it is refreshed on every heartbeat ack).
+    "max_grant_state_age_seconds": 120,
     "max_memory_value_kb": 256,
 }
 

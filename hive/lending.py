@@ -112,12 +112,15 @@ def redeem(conn: sqlite3.Connection, code: str) -> dict[str, str]:
     agent = conn.execute("SELECT secret FROM agents WHERE agent_id = ?", (row["agent_id"],)).fetchone()
     if agent is None:
         raise GrantRefused("the grant's agent is no longer enrolled")
+    # The write re-checks what the read saw: a revoke landing in between wins.
     took = conn.execute(
-        "UPDATE hive_grants SET redeemed = 1 WHERE grant_id = ? AND redeemed = 0", (row["grant_id"],)
+        "UPDATE hive_grants SET redeemed = 1 "
+        "WHERE grant_id = ? AND redeemed = 0 AND revoked_at IS NULL AND epoch = ?",
+        (row["grant_id"], row["epoch"]),
     ).rowcount
     conn.commit()
     if took != 1:
-        raise GrantRefused("code already redeemed")
+        raise GrantRefused("code already redeemed or revoked")
     ttl = int(OPERATIONAL_CONSTRAINTS["borrower_token_ttl_seconds"])
     exp = min(now + timedelta(seconds=ttl), datetime.fromisoformat(row["expires_at"]))
     token = lending_tokens.encode(
@@ -125,6 +128,7 @@ def redeem(conn: sqlite3.Connection, code: str) -> dict[str, str]:
             "sub": f"grant:{row['grant_id']}",
             "grant": row["grant_id"],
             "agent": row["agent_id"],
+            "borrower": row["borrower"],
             "scope": json.loads(row["scopes"]),
             "domains": json.loads(row["domains"]),
             "max_missions": row["max_missions"],
@@ -136,6 +140,21 @@ def redeem(conn: sqlite3.Connection, code: str) -> dict[str, str]:
         str(agent["secret"]),
     )
     return {"token": token, "expires_at": exp.isoformat()}
+
+
+def grant_state(conn: sqlite3.Connection, agent_id: str) -> dict[str, dict[str, Any]]:
+    """What ``agent_id`` needs to honour its borrowers' tokens: epoch, revoked
+    and expiry of every unexpired grant naming it, keyed by grant id."""
+    ensure_schema(conn)
+    rows = conn.execute(
+        "SELECT grant_id, epoch, revoked_at, expires_at FROM hive_grants WHERE agent_id = ? AND expires_at > ?",
+        (agent_id, _now().isoformat()),
+    ).fetchall()
+    return {
+        row["grant_id"]: {"epoch": row["epoch"], "revoked": row["revoked_at"] is not None,
+                          "expires_at": row["expires_at"]}
+        for row in rows
+    }
 
 
 def revoke(conn: sqlite3.Connection, grant_id: str) -> bool:

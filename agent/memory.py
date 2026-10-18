@@ -386,6 +386,10 @@ class SyncEngine:
         if clock:
             for node, val in clock.items():
                 self.vector_clock[node] = max(self.vector_clock.get(node, 0), int(val))
+        if msg_type == "ack" and "grants" in payload:
+            from agent import lending
+
+            lending.record_hive_state(self.store.conn, payload["grants"])
         if msg_type == "memory_delta":
             delta = MemoryDelta(
                 key=payload["key"],

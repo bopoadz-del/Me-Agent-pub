@@ -1,10 +1,12 @@
 # Lending an agent: design
 
-Status: slice 1 done (#12, #15, #17). Slice 2 (issue #19), part A built: the
+Status: slice 1 done (#12, #15, #17). Slice 2 (issue #19) built. Part A: the
 hive holds grants (`hive/lending.py`); `POST /lend` and `POST
 /lend/{grant_id}/revoke` take the admin role, `POST /lend/redeem` turns a code
-into a borrower token for the grant's agent. Part B (the agent accepts those
-tokens and pulls revocations on its heartbeat) is next.
+into a borrower token for the grant's agent. Part B: the agent accepts those
+tokens, with the hive's grant state taken from every heartbeat ack (see "How
+the agent learns of a revocation"). Agent-held grants (slice 1) stay for
+agents with no hive.
 
 **Slice 1 differs from the design below in one way:** the grants live in the
 agent's own store (`agent/lending.py`), and the agent signs and verifies its
@@ -97,6 +99,12 @@ existing heartbeat, and refuses a borrower token when the grant is unknown,
 revoked or behind on epoch. The longest it may go without a fresh pull is a
 bound in data. Past that bound it refuses borrower tokens until the next
 successful pull (fail closed).
+
+As built: the hive's heartbeat ack carries `grants`, the epoch, revoked flag
+and expiry of every unexpired grant naming that agent (and no other's). The
+agent replaces its record of them on each ack and refuses a hive-issued token
+when its grant is absent, revoked, at another epoch, expired, or last heard
+longer ago than `max_grant_state_age_seconds`. Quota is counted by the agent.
 
 ## Open decisions
 
