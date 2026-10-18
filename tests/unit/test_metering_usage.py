@@ -202,6 +202,19 @@ def test_a_released_slot_is_not_given_back_twice(conn):
     assert _used(conn, gid) == 0
 
 
+
+def test_a_slot_already_given_back_is_not_given_back_again(conn):
+    """Another mission still holds a slot, so only the hold check can stop a
+    second refund for a mission whose slot the queue already returned."""
+    from agent import lending
+
+    gid = _grant(conn, max_missions=2)
+    assert lending.claim_mission(conn, gid, "m1") and lending.claim_mission(conn, gid, "m2")
+    lending.release_mission(conn, gid, "m2")
+    assert _used(conn, gid) == 1
+    _record(conn, gid, "m2", _result("failure", [_step("failed")]))
+    assert _used(conn, gid) == 1
+
 # --- the worker -------------------------------------------------------------
 
 class _Orchestrator:

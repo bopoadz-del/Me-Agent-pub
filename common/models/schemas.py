@@ -71,8 +71,6 @@ class HiveMessage(BaseModel):
 
 # ── Missions & execution ───────────────────────────────────────────────────────
 
-#: Size bounds on what the agent and hive accept (operational constraints,
-#: spec Section 10: common.logging.OPERATIONAL_CONSTRAINTS includes them).
 #: Mission outcome codes (agent/metering.py) and whether each counts against a
 #: grant's mission quota: only customer-caused terminal states count.
 USAGE_OUTCOMES: dict[str, dict[str, Any]] = {
@@ -82,6 +80,8 @@ USAGE_OUTCOMES: dict[str, dict[str, Any]] = {
     "failed_by_agent": {"counts": False},
 }
 
+#: Size bounds on what the agent and hive accept (operational constraints,
+#: spec Section 10: common.logging.OPERATIONAL_CONSTRAINTS includes them).
 INPUT_BOUNDS = {
     "max_mission_text_chars": 20_000,
     "max_evidence_items": 50,
