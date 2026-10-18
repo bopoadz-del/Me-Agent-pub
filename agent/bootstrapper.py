@@ -325,6 +325,11 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
             # the grant's own evidence.
             if payload.domain_hint not in grant.domains:
                 raise HTTPException(status_code=403, detail="domain_hint is not one the grant allows")
+            # With no blocks for the domain, resolve would fall back to every
+            # block: a borrowed mission runs only on a kit that is loaded.
+            registry = runtime.get("registry")
+            if registry is None or not registry.blocks_for_domain(payload.domain_hint):
+                raise HTTPException(status_code=403, detail="no kit is loaded for that domain")
             own = lending.evidence_root(grant.grant_id)
             for item in payload.attached_evidence or []:
                 real = Path(os.path.realpath(str(item.get("path", ""))))

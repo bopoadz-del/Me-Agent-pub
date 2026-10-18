@@ -100,10 +100,13 @@ class HeadlessOrchestrator:
         self._last_profile = profile
         domain = profile.domain_hint
         candidates = self.registry.all_blocks()
+        # A hint that selects its domain's blocks confines the whole plan to them.
+        confined_to: Optional[str] = None
         if domain:
             domain_blocks = self.registry.blocks_for_domain(domain)
             if domain_blocks:
                 candidates = domain_blocks
+                confined_to = domain
         elif self.retriever is not None and hasattr(self.retriever, "search_blocks"):
             candidates = self.retriever.search_blocks(profile.natural_language) or candidates
         evidence_required = any(b.evidence_standard for b in candidates)
@@ -126,6 +129,15 @@ class HeadlessOrchestrator:
             refusal = PlanStep(
                 block_id="__refusal__",
                 prompt_scope=f"missing dependency block: {', '.join(sorted(missing))}",
+                tool_set=[],
+                timeout_seconds=1,
+            )
+            return ExecutionPlan(mission_id=profile.mission_id, steps=[refusal])
+        outside = sorted({b.domain for b in selected if confined_to and b.domain != confined_to})
+        if outside:
+            refusal = PlanStep(
+                block_id="__refusal__",
+                prompt_scope=f"dependency outside the mission's domain {confined_to}: {', '.join(outside)}",
                 tool_set=[],
                 timeout_seconds=1,
             )

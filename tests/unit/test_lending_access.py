@@ -64,6 +64,7 @@ def agent(tmp_path, monkeypatch):
     store = LocalStore(str(tmp_path / "data" / "agent.db"))
     runtime = {"comms": Queue(), "store": store, "registry": registry}
     with TestClient(bootstrapper._create_api(runtime)) as client:
+        client.registry = registry  # lets a test unload a kit after lending
         yield client, tmp_path
 
 
@@ -189,3 +190,16 @@ def test_a_grant_names_known_kits_only_once_each(agent, domains):
     r = client.post("/lend", headers=OWNER, json={"borrower": "b", "scopes": ["mission:submit"],
                                                    "domains": domains, "ttl_seconds": 60, "max_missions": 1})
     assert r.status_code == 422
+
+
+def test_a_borrowed_mission_is_refused_once_its_kit_is_no_longer_loaded(agent):
+    """Issue #15: with no blocks for the grant's domain, mission resolve would
+    fall back to every block; a borrowed mission is refused instead."""
+    client, _tmp = agent
+    _gid, auth = _borrower(client)
+    path = _upload(client, auth)
+    for block in client.registry.blocks_for_domain("port_terminal"):
+        del client.registry._blocks[block.block_id]
+    r = _mission(client, auth, [path])
+    assert r.status_code == 403 and "loaded" in r.json()["detail"]
+    assert _mission(client, OWNER, [path]).status_code == 200  # the owner's missions are unchanged
