@@ -77,6 +77,7 @@ INPUT_BOUNDS = {
     "max_mission_text_chars": 20_000,
     "max_evidence_items": 50,
     "max_evidence_file_mb": 50,
+    "max_evidence_list_page": 100,
     "max_memory_value_kb": 256,
 }
 

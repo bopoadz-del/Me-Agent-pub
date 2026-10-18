@@ -136,6 +136,33 @@ def store_upload(name: str, data: bytes) -> Path:
     return target
 
 
+def list_evidence() -> list[tuple[str, Path, int]]:
+    """(reference, path, bytes) for every file inside the whitelist, sorted by
+    reference: its path relative to DATA_DIR/evidence. A link that resolves
+    outside the whitelist is not evidence and is left out."""
+    root = _allowed_evidence_roots()[0]
+    if not root.is_dir():
+        return []
+    out = []
+    for path in root.rglob("*"):
+        real = Path(os.path.realpath(path))
+        if real.is_file() and _under(real, [root]):
+            out.append((path.relative_to(root).as_posix(), real, real.stat().st_size))
+    return sorted(out)
+
+
+def evidence_file(ref: str) -> Path:
+    """The whitelist file a reference names; FileNotFoundError for anything
+    that does not resolve to a file inside the whitelist."""
+    root = _allowed_evidence_roots()[0]
+    if not ref or "\x00" in ref or Path(ref).is_absolute() or "\\" in ref:
+        raise FileNotFoundError(ref)
+    real = Path(os.path.realpath(root / ref))
+    if not _under(real, [root]) or not real.is_file():
+        raise FileNotFoundError(ref)
+    return real
+
+
 def file_reader(path: str) -> str:
     real = Path(os.path.realpath(path))
     if not _under(real, _allowed_evidence_roots()):
