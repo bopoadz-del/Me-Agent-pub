@@ -89,6 +89,14 @@ def _child_worker(
     os.environ.update(child_env)
     block = BlockDef.model_validate(block_payload)
     step = PlanStep.model_validate(step_payload)
+    usage: dict[str, int] = {"tool_calls": 0, "model_calls": 0}
+
+    def _count_model_call(llm: Any) -> None:
+        usage["model_calls"] += 1
+        reported = getattr(llm, "last_usage", None)
+        if isinstance(reported, dict) and isinstance(reported.get("model_tokens"), int):
+            usage["model_tokens"] = usage.get("model_tokens", 0) + reported["model_tokens"]
+
     try:
         harness = _execute_harness_block(block, step)
         if harness:
@@ -113,6 +121,7 @@ def _child_worker(
                 for chunk in chunks:
                     for token in chunk.text.replace(",", " ").split():
                         if any(c.isdigit() for c in token):
+                            usage["tool_calls"] += 1
                             try:
                                 calculator(token)
                             except Exception:  # noqa: BLE001
@@ -130,6 +139,7 @@ def _child_worker(
             raw = llm.generate(
                 prompt, block.system_prompt_template, format=reply_format(block.output_json_schema)
             )
+            _count_model_call(llm)
             if not isinstance(raw, dict):
                 feedback = "the reply was not a JSON object"
                 continue
@@ -159,12 +169,13 @@ def _child_worker(
                 "output": result,
                 "citations": citations,
                 "unheld": unheld if needs_citation else [],
+                "usage": usage,
             }
         )
     except AirGapError as exc:
-        result_queue.put({"ok": False, "output": {"reason": str(exc).lower()}})
+        result_queue.put({"ok": False, "output": {"reason": str(exc).lower()}, "usage": usage})
     except Exception as exc:  # noqa: BLE001 — child boundary
-        result_queue.put({"ok": False, "output": {"reason": str(exc)}})
+        result_queue.put({"ok": False, "output": {"reason": str(exc)}, "usage": usage})
 
 
 def _child_runner_worker(
@@ -293,6 +304,7 @@ class SubAgentSpawner:
             _active_sem.release()
         elapsed = int((time.monotonic() - start) * 1000)
         output = payload.get("output", {})
+        usage = dict(payload.get("usage") or {})
         if not payload.get("ok", False):
             if not isinstance(output, dict):
                 output = {"reason": str(output)}
@@ -302,6 +314,7 @@ class SubAgentSpawner:
                 output=output,
                 validation_status="failed",
                 execution_time_ms=elapsed,
+                usage=usage,
             )
         status = self._validate_output(block, output)
         grounded_block = bool(block.evidence_standard) and bool(evidence_paths)
@@ -317,6 +330,7 @@ class SubAgentSpawner:
                 },
                 validation_status="failed",
                 execution_time_ms=elapsed,
+                usage=usage,
             )
         if status == "failed":
             retry_prompt = (
@@ -330,6 +344,10 @@ class SubAgentSpawner:
             if llm is not None:
                 try:
                     output = llm.generate(step.prompt_scope, retry_prompt, format="json")
+                    usage["model_calls"] = int(usage.get("model_calls", 0)) + 1
+                    reported = getattr(llm, "last_usage", None)
+                    if isinstance(reported, dict) and isinstance(reported.get("model_tokens"), int):
+                        usage["model_tokens"] = int(usage.get("model_tokens", 0)) + reported["model_tokens"]
                     status = self._validate_output(block, output)
                 except Exception:  # noqa: BLE001
                     status = "failed"
@@ -356,6 +374,7 @@ class SubAgentSpawner:
             output=output,
             validation_status=status,
             execution_time_ms=elapsed,
+            usage=usage,
         )
 
     def _validate_output(self, block: BlockDef, output: dict[str, Any]) -> str:
