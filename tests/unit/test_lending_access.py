@@ -30,11 +30,14 @@ class Queue:
 
     def __init__(self) -> None:
         self.profiles: dict[str, object] = {}
+        self.refuse = False  # a saturated queue turns missions away
 
     def queue_depth(self) -> int:
         return len(self.profiles)
 
     def enqueue(self, profile) -> bool:
+        if self.refuse:
+            return False
         self.profiles[profile.mission_id] = profile
         return True
 
@@ -65,6 +68,7 @@ def agent(tmp_path, monkeypatch):
     runtime = {"comms": Queue(), "store": store, "registry": registry}
     with TestClient(bootstrapper._create_api(runtime)) as client:
         client.registry = registry  # lets a test unload a kit after lending
+        client.queue = runtime["comms"]  # lets a test saturate the queue
         yield client, tmp_path
 
 
@@ -203,3 +207,19 @@ def test_a_borrowed_mission_is_refused_once_its_kit_is_no_longer_loaded(agent):
     r = _mission(client, auth, [path])
     assert r.status_code == 403 and "loaded" in r.json()["detail"]
     assert _mission(client, OWNER, [path]).status_code == 200  # the owner's missions are unchanged
+
+
+def test_a_borrowed_mission_the_queue_refuses_gives_its_quota_slot_back(agent):
+    """Issue #17: a refused enqueue must not spend the grant's quota."""
+    client, tmp = agent
+    grant_id, auth = _borrower(client, max_missions=1)
+    path = _upload(client, auth)
+    client.queue.refuse = True
+    assert _mission(client, auth, [path]).status_code == 429
+    import sqlite3
+    conn = sqlite3.connect(str(tmp / "data" / "agent.db"))
+    rows = conn.execute("SELECT COUNT(*) FROM grant_missions WHERE grant_id = ?", (grant_id,)).fetchone()[0]
+    conn.close()
+    assert rows == 0
+    client.queue.refuse = False
+    assert _mission(client, auth, [path]).status_code == 200
