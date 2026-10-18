@@ -97,6 +97,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS grant_missions (mission_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL)"
     )
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {HIVE_STATE_TABLE} (grant_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL, "
+        "revoked INTEGER NOT NULL, expires_at TEXT NOT NULL, heard_at TEXT NOT NULL)"
+    )
     conn.commit()
 
 
@@ -189,6 +193,80 @@ def verify(conn: sqlite3.Connection, token: str, key: str) -> Grant:
     row = _row(conn, "grant_id", str(claims["grant"]))
     if not _live(row, now) or row["epoch"] != claims["epoch"]:
         raise GrantRefused("grant is revoked, expired or unknown")
+    return Grant(
+        grant_id=row["grant_id"],
+        borrower=row["borrower"],
+        scopes=tuple(json.loads(row["scopes"])),
+        domains=json.loads(row["domains"]),
+        expires_at=datetime.fromisoformat(row["expires_at"]),
+        max_missions=row["max_missions"],
+        missions_used=row["missions_used"],
+    )
+
+
+#: The hive's state of the grants naming this agent, as last heard on an ack.
+HIVE_STATE_TABLE = "hive_grant_state"
+_HIVE_MARK = "hive:"
+
+
+def record_hive_state(conn: sqlite3.Connection, grants: Any) -> None:
+    """Replace the recorded hive grant state with what an ack carried."""
+    if not isinstance(grants, dict):
+        return
+    ensure_schema(conn)
+    heard_at = _now().isoformat()
+    rows = []
+    for grant_id, state in grants.items():
+        try:
+            rows.append((str(grant_id), int(state["epoch"]), 1 if state["revoked"] else 0,
+                         datetime.fromisoformat(str(state["expires_at"])).isoformat(), heard_at))
+        except (KeyError, TypeError, ValueError):
+            continue  # an entry that does not parse opens nothing
+    conn.execute(f"DELETE FROM {HIVE_STATE_TABLE}")
+    conn.executemany(
+        f"INSERT INTO {HIVE_STATE_TABLE}(grant_id, epoch, revoked, expires_at, heard_at) VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+
+
+def verify_hive(conn: sqlite3.Connection, token: str, agent_secret: str, agent_id: str) -> Grant:
+    """The live hive-held grant a borrower token stands for; GrantRefused
+    otherwise. The token must verify under this agent's enrolment secret and
+    name this agent, and the hive's state of the grant must be fresh, unrevoked
+    and at the token's epoch. Quota is counted here, in a local record."""
+    try:
+        claims = lending_tokens.decode(token, agent_secret)
+    except lending_tokens.TokenRefused as exc:
+        raise GrantRefused(str(exc)) from exc
+    now = _now()
+    if claims.get("agent") != agent_id or claims["exp"] <= now.timestamp():
+        raise GrantRefused("not a live borrower token for this agent")
+    ensure_schema(conn)
+    grant_id = str(claims["grant"])
+    state = conn.execute(
+        f"SELECT epoch, revoked, expires_at, heard_at FROM {HIVE_STATE_TABLE} WHERE grant_id = ?", (grant_id,)
+    ).fetchone()
+    max_age = timedelta(seconds=int(OPERATIONAL_CONSTRAINTS["max_grant_state_age_seconds"]))
+    if (
+        state is None
+        or now - datetime.fromisoformat(state[3]) > max_age
+        or state[1]
+        or state[0] != claims["epoch"]
+        or datetime.fromisoformat(state[2]) <= now
+    ):
+        raise GrantRefused("the hive's grant state is missing, stale, revoked or at another epoch")
+    conn.execute(
+        "INSERT OR IGNORE INTO grants(grant_id, borrower, scopes, domains, not_before, expires_at, max_missions, "
+        "redeem_hash, redeemed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        (grant_id, str(claims.get("borrower", "")), json.dumps(sorted(set(claims.get("scope") or []))),
+         json.dumps(claims.get("domains") or []), now.isoformat(), state[2],
+         int(claims.get("max_missions") or 0), _HIVE_MARK + grant_id),
+    )
+    conn.commit()
+    row = _row(conn, "grant_id", grant_id)
+    if row is None or row["redeem_hash"] != _HIVE_MARK + grant_id:
+        raise GrantRefused("grant id is held by this agent, not the hive")
     return Grant(
         grant_id=row["grant_id"],
         borrower=row["borrower"],

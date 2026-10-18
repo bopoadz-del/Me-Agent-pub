@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from common.models.schemas import INPUT_BOUNDS, HiveMessage, MemoryDelta, SyncConflict
 from common.storage.db import embedding_dim
+from hive import lending as hive_lending
 
 
 def clock_dominates(a: dict[str, int], b: dict[str, int]) -> bool:
@@ -248,7 +249,8 @@ def heartbeat_response(
         HiveMessage(
             msg_type="ack",
             session_id=session_id,
-            payload={},
+            # The agent's borrowers' grants ride on every ack (docs/LENDING.md).
+            payload={"grants": hive_lending.grant_state(conn, session_id)},
             vector_clock=hive_vector_clock(conn),
         )
     )

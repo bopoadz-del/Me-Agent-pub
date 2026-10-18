@@ -254,6 +254,9 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
         if not secrets.compare_digest(token.encode(), api_token.encode()):
             raise HTTPException(status_code=401, detail="unauthorized")
 
+    agent_secret = os.environ.get("AGENT_SECRET", "")
+    agent_id = os.environ.get("AGENT_ID", "")
+
     def _caller(method: str, path: str):
         """The route's caller: the owner (None) or a borrower's live grant. The
         scope a borrower needs is the route's row in lending.ROUTE_ACCESS."""
@@ -268,7 +271,13 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
             try:
                 grant = lending.verify(runtime["store"].conn, token, api_token)
             except lending.GrantRefused as exc:
-                raise HTTPException(status_code=401, detail="unauthorized") from exc
+                # Not one of ours: perhaps a grant the hive holds for this agent.
+                if not (agent_secret and agent_id):
+                    raise HTTPException(status_code=401, detail="unauthorized") from exc
+                try:
+                    grant = lending.verify_hive(runtime["store"].conn, token, agent_secret, agent_id)
+                except lending.GrantRefused as hive_exc:
+                    raise HTTPException(status_code=401, detail="unauthorized") from hive_exc
             if scope not in grant.scopes:
                 raise HTTPException(status_code=403, detail=f"grant lacks scope {scope}")
             return grant
