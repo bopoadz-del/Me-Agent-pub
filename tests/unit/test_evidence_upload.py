@@ -100,3 +100,27 @@ def test_an_upload_over_the_request_cap_is_refused(client):
     r = c.post("/evidence/big.txt", content=b"x" * (REQUEST_BODY_MAX_BYTES + 1), headers=AUTH)
     assert r.status_code == 413
     assert _files(tmp) == []
+
+
+# The name rule itself, without the router in front of it.
+
+@pytest.mark.parametrize(
+    "name",
+    ["..", "../x.txt", "a/b.txt", "a\b.txt", "C:x.txt", ".env", "-x.txt", "a\x00b.txt", "x" * 129,
+     "con", "NUL.txt", "com1.csv", "Lpt9", "aux.json", "prn"],
+)
+def test_store_upload_refuses_a_name_that_is_not_one_ordinary_file_name(tmp_path, monkeypatch, name):
+    from agent.swarm import tools
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    with pytest.raises(ValueError):
+        tools.store_upload(name, b"x\n")
+    assert _files(tmp_path) == []
+
+
+@pytest.mark.parametrize("name", ["console.txt", "nullable.csv", "com10.txt", "a.b-c_d.TXT"])
+def test_store_upload_keeps_ordinary_names(tmp_path, monkeypatch, name):
+    from agent.swarm import tools
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    assert tools.store_upload(name, b"x\n").name == name
