@@ -360,6 +360,8 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
             raise HTTPException(status_code=403, detail="the grant's mission quota is spent")
         runtime["store"].last_profile = profile
         if not comms.enqueue(profile):
+            if grant is not None:
+                lending.release_mission(runtime["store"].conn, grant.grant_id, profile.mission_id)
             raise HTTPException(status_code=429, detail="queue saturated")
         return {"mission_id": profile.mission_id, "status": "queued"}
 

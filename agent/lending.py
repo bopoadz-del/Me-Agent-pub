@@ -243,6 +243,21 @@ def claim_mission(conn: sqlite3.Connection, grant_id: str, mission_id: str) -> b
     return took == 1
 
 
+def release_mission(conn: sqlite3.Connection, grant_id: str, mission_id: str) -> None:
+    """Give back the slot a mission claimed when the mission never ran (the
+    queue refused it): the count goes back down and the record goes."""
+    ensure_schema(conn)
+    gone = conn.execute(
+        "DELETE FROM grant_missions WHERE mission_id = ? AND grant_id = ?", (mission_id, grant_id)
+    ).rowcount
+    if gone == 1:
+        conn.execute(
+            "UPDATE grants SET missions_used = missions_used - 1 WHERE grant_id = ? AND missions_used > 0",
+            (grant_id,),
+        )
+    conn.commit()
+
+
 def mission_grant(conn: sqlite3.Connection, mission_id: str) -> Optional[str]:
     """The grant a mission was run under; None for the owner's own missions."""
     ensure_schema(conn)
