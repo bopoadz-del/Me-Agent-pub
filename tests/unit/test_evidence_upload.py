@@ -106,7 +106,7 @@ def test_an_upload_over_the_request_cap_is_refused(client):
 
 @pytest.mark.parametrize(
     "name",
-    ["..", "../x.txt", "a/b.txt", "a\b.txt", "C:x.txt", ".env", "-x.txt", "a\x00b.txt", "x" * 129,
+    ["..", "../x.txt", "a/b.txt", "a\\b.txt", "C:x.txt", ".env", "-x.txt", "a\x00b.txt", "x" * 129,
      "con", "NUL.txt", "com1.csv", "Lpt9", "aux.json", "prn"],
 )
 def test_store_upload_refuses_a_name_that_is_not_one_ordinary_file_name(tmp_path, monkeypatch, name):
