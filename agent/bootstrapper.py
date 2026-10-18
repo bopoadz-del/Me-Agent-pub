@@ -17,6 +17,7 @@ from typing import Any, Optional
 import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from agent.comms import CommsLink
@@ -24,7 +25,7 @@ from agent.memory import LocalStore, Retriever, SyncEngine
 from agent.orchestrator.engine import HeadlessOrchestrator, disk_over_limit
 from agent.swarm.registry import BlockRegistry
 from agent.swarm.spawner import SubAgentSpawner
-from agent.swarm.tools import intake_evidence, store_upload
+from agent.swarm.tools import evidence_file, intake_evidence, list_evidence, store_upload
 from common.http_limits import REQUEST_BODY_MAX_BYTES, BodySizeLimit
 from common.logging import OPERATIONAL_CONSTRAINTS, get_logger
 from agent.model_server import ModelServerGate
@@ -269,7 +270,9 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
             raise HTTPException(status_code=429, detail="queue saturated")
         return {"mission_id": profile.mission_id, "status": "queued"}
 
-    @app.post("/evidence/{name}", dependencies=[Depends(_auth)])
+    # {name:path} so a name with a separator reaches the name rule and is refused
+    # there (400), the same as every other bad name.
+    @app.post("/evidence/{name:path}", dependencies=[Depends(_auth)])
     async def post_evidence(name: str, request: Request) -> dict[str, Any]:
         # One document as the raw body, under the same cap as every route; the
         # reply is the path to attach to a mission.
@@ -283,6 +286,23 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"path": str(path), "type": path.suffix.lstrip(".").lower() or "txt", "bytes": len(data)}
+
+    @app.get("/evidence", dependencies=[Depends(_auth)])
+    async def get_evidence_list(offset: int = 0, limit: Optional[int] = None) -> dict[str, Any]:
+        max_page = int(OPERATIONAL_CONSTRAINTS["max_evidence_list_page"])
+        limit = max_page if limit is None else limit
+        if offset < 0 or not 1 <= limit <= max_page:
+            raise HTTPException(status_code=422, detail=f"offset >= 0 and 1 <= limit <= {max_page}")
+        every = list_evidence()
+        items = [{"ref": ref, "path": str(path), "bytes": size} for ref, path, size in every[offset:offset + limit]]
+        return {"items": items, "total": len(every), "offset": offset, "limit": limit}
+
+    @app.get("/evidence/{ref:path}", dependencies=[Depends(_auth)])
+    async def get_evidence_file(ref: str) -> FileResponse:
+        try:
+            return FileResponse(evidence_file(ref))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="not found") from exc
 
     @app.get("/mission/{mission_id}", dependencies=[Depends(_auth)])
     async def get_mission(mission_id: str) -> dict[str, Any]:
