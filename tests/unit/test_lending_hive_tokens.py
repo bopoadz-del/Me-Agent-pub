@@ -178,3 +178,111 @@ def test_a_revoke_during_redeem_issues_no_token(world):
 
     with pytest.raises(hive_lending.GrantRefused):
         hive_lending.redeem(RevokeAfterRead(), lent["redeem_code"])
+
+
+# --- Each refusal on its own (grade of #21) ---------------------------------
+
+def _state(w, grant_id, **over):
+    """Record the hive's state of one grant, with fields overridden."""
+    from agent import lending
+    from hive import lending as hive_lending
+
+    state = {**hive_lending.grant_state(w["hive"], "agent-1")[grant_id], **over}
+    lending.record_hive_state(w["store"].conn, {grant_id: state})
+
+
+def _forged(w, grant_id, **claims):
+    """A token signed with agent-1's own secret, with chosen claims."""
+    from common import lending_tokens
+
+    exp = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+    base = {"sub": f"grant:{grant_id}", "grant": grant_id, "agent": "agent-1", "borrower": "visiting team",
+            "scope": ["mission:submit"], "domains": ["port_terminal"], "max_missions": 5, "epoch": 0, "exp": exp}
+    token = lending_tokens.encode({**base, **claims}, w["secrets"]["agent-1"])
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_an_epoch_behind_the_hive_is_refused_while_the_grant_is_not_revoked(world):
+    gid, auth = _lend(world)
+    _state(world, gid, epoch=1, revoked=False)
+    assert _mission(world, auth).status_code == 401
+
+
+def test_a_grant_the_hive_says_has_expired_is_refused(world):
+    gid, auth = _lend(world)
+    _state(world, gid, expires_at=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat())
+    assert _mission(world, auth).status_code == 401
+
+
+def test_a_token_naming_another_agent_is_refused_even_when_its_signature_verifies(world):
+    gid, _auth = _lend(world)
+    _heartbeat(world)
+    assert _mission(world, _forged(world, gid)).status_code == 200  # the forge is otherwise sound
+    gid2, _ = _lend(world)
+    _heartbeat(world)
+    assert _mission(world, _forged(world, gid2, agent="agent-2")).status_code == 401
+
+
+def test_a_token_opens_only_the_path_whose_key_signed_it(world):
+    from agent import lending
+
+    _gid, hive_auth = _lend(world)
+    _heartbeat(world)
+    lent = world["client"].post("/lend", headers={"Authorization": f"Bearer {TOKEN}"}, json={
+        "borrower": "visiting team", "scopes": ["mission:submit"], "domains": ["port_terminal"],
+        "ttl_seconds": 3600, "max_missions": 5}).json()
+    local = world["client"].post("/lend/redeem", json={"code": lent["redeem_code"]}).json()["token"]
+    hive_token = hive_auth["Authorization"].split(" ", 1)[1]
+    conn = world["store"].conn
+    with pytest.raises(lending.GrantRefused):
+        lending.verify_hive(conn, local, world["secrets"]["agent-1"], "agent-1")
+    with pytest.raises(lending.GrantRefused):
+        lending.verify(conn, hive_token, TOKEN)
+
+
+def test_a_hive_grant_cannot_take_over_an_agent_held_grant_id(world):
+    from agent import lending
+
+    lent = world["client"].post("/lend", headers={"Authorization": f"Bearer {TOKEN}"}, json={
+        "borrower": "visiting team", "scopes": ["mission:submit"], "domains": ["port_terminal"],
+        "ttl_seconds": 3600, "max_missions": 1}).json()
+    local_id = lent["grant_id"]
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    lending.record_hive_state(world["store"].conn,
+                              {local_id: {"epoch": 0, "revoked": False, "expires_at": expires}})
+    assert _mission(world, _forged(world, local_id, max_missions=1000)).status_code == 401
+    row = world["store"].conn.execute(
+        "SELECT max_missions, missions_used, redeem_hash FROM grants WHERE grant_id = ?", (local_id,)).fetchone()
+    assert tuple(row)[:2] == (1, 0) and not str(row[2]).startswith("hive:")
+
+
+def test_a_hive_grant_opens_only_its_own_domains(world):
+    _gid, auth = _lend(world)
+    _heartbeat(world)
+    r = world["client"].post("/mission", headers=auth,
+                             json={"natural_language": MISSION, "domain_hint": "some_other_domain"})
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize("grants", ["not a dict", {}, {"g": {"epoch": "x", "revoked": False}}])
+def test_an_ack_that_carries_no_usable_state_opens_nothing(world, grants):
+    gid, auth = _lend(world)
+    bad = grants if not isinstance(grants, dict) or "g" not in grants else {gid: grants["g"]}
+    world["engine"]._handle_message({"msg_type": "ack", "session_id": "agent-1", "payload": {"grants": bad},
+                                     "vector_clock": {}})
+    assert _mission(world, auth).status_code == 401
+
+
+def test_an_empty_ack_withdraws_what_an_earlier_one_granted(world):
+    _gid, auth = _lend(world)
+    _heartbeat(world)
+    assert _mission(world, auth).status_code == 200
+    world["engine"]._handle_message({"msg_type": "ack", "session_id": "agent-1", "payload": {"grants": {}},
+                                     "vector_clock": {}})
+    assert _mission(world, auth).status_code == 401
+
+
+def test_a_revoked_flag_is_refused_on_its_own_at_the_same_epoch(world):
+    gid, auth = _lend(world)
+    _state(world, gid, epoch=0, revoked=True)
+    assert _mission(world, auth).status_code == 401
