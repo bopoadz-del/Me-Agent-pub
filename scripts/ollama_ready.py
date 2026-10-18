@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.model in names:
         return 0
     sys.stdout.write(f"downloading {args.model} into the local Ollama (download only, nothing is loaded)\n")
+    sys.stdout.flush()  # before any error line on stderr, which is unbuffered
     with httpx.stream("POST", f"{base}/api/pull", json={"model": args.model}, timeout=None) as resp:
         for line in resp.iter_lines():
             if not line:
