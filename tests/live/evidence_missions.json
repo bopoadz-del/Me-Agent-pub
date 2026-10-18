@@ -3,12 +3,14 @@
   "missions": [
     {
       "id": "prose-single-line",
+      "domain_hint": "port_terminal",
       "natural_language": "Calculate berth fee for a dry container using attached tariff evidence",
       "documents": {"tariff.txt": "Container type: dry. Dwell hours: 24. Base rate: 10 USD/hr.\n"},
       "expect": {"base_rate_usd_per_hour": 10, "berth_fee_usd": 240}
     },
     {
       "id": "csv-middle-row",
+      "domain_hint": "port_terminal",
       "natural_language": "Calculate berth fee for a reefer container using attached tariff evidence",
       "documents": {
         "tariffs.csv": "container_type,base_rate_usd_per_hour,currency\ndry,10,USD\nreefer,18.5,USD\nhazardous,27,USD\n",
@@ -18,6 +20,7 @@
     },
     {
       "id": "notice-last-row",
+      "domain_hint": "port_terminal",
       "natural_language": "Calculate berth fee for a hazardous container using attached tariff evidence",
       "documents": {
         "notice.txt": "Port tariff notice.\nDry containers are charged a base rate of 10 USD per hour.\nReefer containers are charged a base rate of 18.5 USD per hour.\nHazardous containers are charged a base rate of 27 USD per hour.\nThe vessel recorded 12 dwell hours at the berth.\n"
@@ -26,6 +29,7 @@
     },
     {
       "id": "pipe-table",
+      "domain_hint": "port_terminal",
       "natural_language": "Calculate berth fee for a reefer container using attached tariff evidence",
       "documents": {
         "schedule.md": "| container_type | base_rate_usd_per_hour | currency |\n| reefer | 18.5 | USD |\n| dry | 10 | USD |\n",
@@ -35,6 +39,7 @@
     },
     {
       "id": "semicolon-reordered-columns",
+      "domain_hint": "port_terminal",
       "natural_language": "Calculate berth fee for a dry container using attached tariff evidence",
       "documents": {
         "rates.csv": "currency;base_rate_usd_per_hour;container_type\nUSD;27;hazardous\nUSD;18.5;reefer\nUSD;10;dry\n",
@@ -44,14 +49,46 @@
     },
     {
       "id": "reworded-rate",
+      "domain_hint": "port_terminal",
       "natural_language": "Calculate berth fee for a dry container using attached tariff evidence",
       "documents": {
         "terms.txt": "Hourly berth rate in USD per hour for dry boxes: 10.\nTime alongside: 6 dwell hours.\n"
       },
       "expect": {"base_rate_usd_per_hour": 10, "berth_fee_usd": 60}
+    },
+    {
+      "id": "mix-prose-lines",
+      "domain_hint": "concrete_mix",
+      "natural_language": "Calculate the water cement ratio for an XC3 mix using attached mix design evidence",
+      "documents": {"mix.txt": "Mix design for exposure class XC3.\nFree water: 165 kg/m3.\nCement: 330 kg/m3.\n"},
+      "expect": {"water_cement_ratio": 0.5}
+    },
+    {
+      "id": "mix-csv-row",
+      "domain_hint": "concrete_mix",
+      "natural_language": "Calculate the water cement ratio for an XC1 mix using attached mix design evidence",
+      "documents": {"batch.csv": "cement_kg_per_m3,free_water_kg_per_m3,admixture\n360,162,plasticiser\n"},
+      "expect": {"water_cement_ratio": 0.45}
+    },
+    {
+      "id": "mix-two-documents",
+      "domain_hint": "concrete_mix",
+      "natural_language": "Calculate the water cement ratio for an XC4 mix using attached mix design evidence",
+      "documents": {
+        "design.txt": "Target exposure class XC4.\nCement content 320 kg per m3.\n",
+        "trial.txt": "Trial batch result: free water 160 kg per m3.\n"
+      },
+      "expect": {"water_cement_ratio": 0.5}
     }
   ],
-  "refusal": {
-    "natural_language": "Calculate berth fee for a dry container using attached tariff evidence"
-  }
+  "refusals": [
+    {
+      "domain_hint": "port_terminal",
+      "natural_language": "Calculate berth fee for a dry container using attached tariff evidence"
+    },
+    {
+      "domain_hint": "concrete_mix",
+      "natural_language": "Calculate the water cement ratio for an XC3 mix using attached mix design evidence"
+    }
+  ]
 }

@@ -9,7 +9,9 @@ documents that differ in layout, row position and wording):
             success|partial, return the expected values (the right row), carry
             non-empty citations whose every excerpt appears VERBATIM in its
             documents, and confidence >= 0.9.
-  negative: the mission WITHOUT evidence must be refused per Section 8.3 --
+Each case names its kit's domain; there is one refusal case per kit.
+
+  negative: each refusal case, sent WITHOUT evidence, must be refused per Section 8.3 --
             status "failure", confidence 0.0, no citations, and a reason naming
             evidence.
 
@@ -144,6 +146,16 @@ def _stage(service: str, mission_id: str, documents: dict[str, str]) -> list[str
     return paths
 
 
+def _mission_body(case: dict[str, Any], paths: list[str]) -> dict[str, Any]:
+    """POST /mission body for a case: its own words, its own kit's domain."""
+    return {
+        "natural_language": case["natural_language"],
+        "domain_hint": case["domain_hint"],
+        "attached_evidence": [{"type": _evidence_type(p), "path": p} for p in paths],
+        "required_confidence": 0.9,
+    }
+
+
 def _evidence_type(name: str) -> str:
     suffix = Path(name).suffix.lstrip(".").lower()
     return suffix if suffix in ("txt", "csv", "pdf", "json") else "txt"
@@ -160,19 +172,12 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     spec = json.loads(Path(args.missions).read_text(encoding="utf-8"))
     failures: list[str] = []
-    total = len(spec["missions"]) + 1
+    total = len(spec["missions"]) + len(spec["refusals"])
     slowest_ms = 0
 
     for n, case in enumerate(spec["missions"], start=1):
         paths = _stage(args.service, case["id"], case["documents"])
-        body = {
-            "natural_language": case["natural_language"],
-            "domain_hint": "port_terminal",
-            "attached_evidence": [
-                {"type": _evidence_type(p), "path": p} for p in paths
-            ],
-            "required_confidence": 0.9,
-        }
+        body = _mission_body(case, paths)
         sys.stdout.write(f"[{n}/{total}] {case['id']}: mission WITH evidence\n")
         mission_id = _post_mission(args.base_url, args.token, body)
         result = _await_result(args.base_url, args.token, mission_id, args.timeout)
@@ -187,17 +192,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             if not failures[i].startswith(case["id"]):
                 failures[i] = f"{case['id']}: {failures[i]}"
 
-    refusal_body = {
-        "natural_language": spec["refusal"]["natural_language"],
-        "domain_hint": "port_terminal",
-        "attached_evidence": [],
-        "required_confidence": 0.9,
-    }
-    sys.stdout.write(f"[{total}/{total}] mission WITHOUT evidence (must be refused)\n")
-    refusal_id = _post_mission(args.base_url, args.token, refusal_body)
-    refusal = _await_result(args.base_url, args.token, refusal_id, args.timeout)
-    sys.stdout.write(json.dumps(refusal, indent=2)[:2000] + "\n")
-    _check_refusal(refusal, failures)
+    for n, case in enumerate(spec["refusals"], start=len(spec["missions"]) + 1):
+        sys.stdout.write(f"[{n}/{total}] {case['domain_hint']}: mission WITHOUT evidence (must be refused)\n")
+        refusal_id = _post_mission(args.base_url, args.token, _mission_body(case, []))
+        refusal = _await_result(args.base_url, args.token, refusal_id, args.timeout)
+        sys.stdout.write(json.dumps(refusal, indent=2)[:2000] + "\n")
+        before = len(failures)
+        _check_refusal(refusal, failures)
+        for i in range(before, len(failures)):
+            failures[i] = f"refusal {case['domain_hint']}: {failures[i]}"
 
     sys.stdout.write(f"\nslowest step: {slowest_ms} ms\n")
     if failures:
@@ -205,7 +208,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         for failure in failures:
             sys.stdout.write(f"  - {failure}\n")
         return 1
-    sys.stdout.write(f"\nLIVE E2E PASSED (spec 11.4 step 7): {total - 1} evidence missions + refusal.\n")
+    sys.stdout.write(
+        f"\nLIVE E2E PASSED (spec 11.4 step 7): {len(spec['missions'])} evidence missions"
+        f" + {len(spec['refusals'])} refusals.\n"
+    )
     return 0
 
 

@@ -165,3 +165,22 @@ def test_a_field_the_model_did_not_return_is_not_invented():
     chunks = chunk_evidence([("stay.txt", "Dwell hours: 8.\n")])
     upstream = {"row": {"base_rate_usd_per_hour": 10}}
     assert apply_formulas({"currency": "USD"}, chunks, FEE_FORMULA, upstream) == {"currency": "USD"}
+
+
+# A comma-delimited row whose number cells sit side by side: each cell is its own
+# number ("360,162" is two values, not one thousands-separated value).
+
+ADJACENT = "length_m,width_m,note\n12,3,approved\n"
+AREA = {"area_m2": "length_m * width_m"}
+
+
+def test_side_by_side_number_cells_are_separate_operands():
+    chunks = chunk_evidence([("plan.csv", ADJACENT)])
+    assert apply_formulas({"area_m2": 30}, chunks, AREA, {}) == {"area_m2": 36}
+
+
+def test_a_value_computed_from_side_by_side_cells_is_held_by_its_row():
+    chunks = chunk_evidence([("plan.csv", ADJACENT)])
+    result, citations, unheld = parse_reply({"area_m2": 36}, chunks, {"type": "object"}, AREA, {})
+    assert unheld == []
+    assert [c["excerpt"] for c in citations] == ["12,3,approved"]
