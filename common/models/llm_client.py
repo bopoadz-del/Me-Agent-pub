@@ -120,13 +120,6 @@ class MockLLMClient(LLMClient):
                 b = int(mb.group(1))
         elif len(nums) >= 2:
             a, b = nums[0], nums[1]
-        if "berth" in prompt.lower() or "berth" in system.lower():
-            dwell = nums[0] if nums else 24
-            rate = nums[1] if len(nums) > 1 else 10
-            return {
-                "berth_fee_usd": float(dwell * rate),
-                "citations": [{"source": "evidence", "excerpt": f"{dwell}", "confidence": 1.0}],
-            }
         return {
             "sum": a + b,
             "citations": [
