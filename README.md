@@ -15,7 +15,8 @@ compiled into blocks (see below).
   setup scripts.
 - **Docker** with the **compose v2** plugin (`docker compose version` must
   answer): <https://docs.docker.com/get-docker/>.
-- **Ollama**, running on this machine: <https://ollama.com/download>.
+- **Ollama**, running on this machine (<https://ollama.com/download>), for
+  `make up`. Without it, `make run` brings its own (see below).
 - **make** (on Debian/Ubuntu: `sudo apt install make`).
 
 ## Five-minute path: run the tests, no Docker or model needed
@@ -60,6 +61,20 @@ make down    # stop them (your data stays)
 
 Data lives on the docker volumes `hive-data` and `agent-data`. `make down`
 keeps them.
+
+### No Ollama installed: `make run`
+
+```sh
+make run     # hive + agent + their own Ollama server
+make down    # stops all three (your data and the downloaded model stay)
+```
+
+`make run` is `make up` with the stack's own Ollama container (compose
+profile `bundled-ollama`) instead of one on your machine. That container
+downloads `llama3.2:3b` (about 2 GB) on first start and loads it, so the first
+start takes a few minutes; the model stays on the `ollama-data` volume for the
+next one. This is the same path CI's live job runs. Docker, `make` and
+Python 3 (used once, to generate the credentials in `.env`) are all you need.
 
 The model is named in one place: `config/model.env`.
 

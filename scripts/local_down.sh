@@ -1,6 +1,7 @@
 #!/bin/sh
-# One command: stop hive + agent. Data stays on the named volumes; the local
-# Ollama server and its models are never touched.
+# One command: stop hive + agent, and the bundled Ollama if `make run` started
+# it. Data stays on the named volumes; an Ollama server on the host and its
+# models are never touched.
 set -eu
 cd "$(dirname "$0")/.."
-docker compose down
+docker compose --profile bundled-ollama down
