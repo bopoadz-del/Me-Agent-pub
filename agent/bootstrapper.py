@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 import httpx
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agent.comms import CommsLink
@@ -24,7 +24,7 @@ from agent.memory import LocalStore, Retriever, SyncEngine
 from agent.orchestrator.engine import HeadlessOrchestrator, disk_over_limit
 from agent.swarm.registry import BlockRegistry
 from agent.swarm.spawner import SubAgentSpawner
-from agent.swarm.tools import intake_evidence
+from agent.swarm.tools import intake_evidence, store_upload
 from common.http_limits import REQUEST_BODY_MAX_BYTES, BodySizeLimit
 from common.logging import OPERATIONAL_CONSTRAINTS, get_logger
 from agent.model_server import ModelServerGate
@@ -268,6 +268,21 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
         if not comms.enqueue(profile):
             raise HTTPException(status_code=429, detail="queue saturated")
         return {"mission_id": profile.mission_id, "status": "queued"}
+
+    @app.post("/evidence/{name}", dependencies=[Depends(_auth)])
+    async def post_evidence(name: str, request: Request) -> dict[str, Any]:
+        # One document as the raw body, under the same cap as every route; the
+        # reply is the path to attach to a mission.
+        if disk_over_limit(_data_paths()[0]):
+            raise HTTPException(status_code=429, detail="disk limit exceeded")
+        data = await request.body()
+        try:
+            path = store_upload(name, data)
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=415, detail="evidence must be UTF-8 text") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"path": str(path), "type": path.suffix.lstrip(".").lower() or "txt", "bytes": len(data)}
 
     @app.get("/mission/{mission_id}", dependencies=[Depends(_auth)])
     async def get_mission(mission_id: str) -> dict[str, Any]:

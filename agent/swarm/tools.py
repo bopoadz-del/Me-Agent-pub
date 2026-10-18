@@ -5,6 +5,7 @@ import ast
 import json
 import operator as op
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
@@ -100,6 +101,37 @@ def intake_evidence(items: list[dict[str, Any]], mission_id: str) -> list[dict[s
         shutil.copyfile(real, target)
         out.append({**item, "path": str(target.resolve())})
     return out
+
+
+#: One plain file name: no directory part, no leading dot or dash.
+_UPLOAD_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def store_upload(name: str, data: bytes) -> Path:
+    """Write one uploaded document into the whitelist, in a directory of its own.
+
+    The document must be UTF-8 text, the only thing file_reader reads; a body
+    that is not raises UnicodeDecodeError. A name that is not one plain file
+    name, or an empty or oversized body, raises ValueError. Nothing is written
+    outside DATA_DIR/evidence."""
+    import uuid
+
+    if not _UPLOAD_NAME.fullmatch(name):
+        raise ValueError(f"evidence name must be one plain file name: {name!r}")
+    if not data:
+        raise ValueError("evidence document is empty")
+    max_bytes = int(OPERATIONAL_CONSTRAINTS["max_evidence_file_mb"]) * 1024 * 1024
+    if len(data) > max_bytes:
+        raise ValueError(f"evidence document larger than {max_bytes} bytes")
+    data.decode("utf-8")
+    root = _allowed_evidence_roots()[0]
+    target_dir = (root / f"upload-{uuid.uuid4().hex}").resolve()
+    target = (target_dir / name).resolve()
+    if target_dir.parent != root or target.parent != target_dir:
+        raise ValueError(f"evidence upload would leave its directory: {name!r}")
+    target_dir.mkdir(parents=True)
+    target.write_bytes(data)
+    return target
 
 
 def file_reader(path: str) -> str:
