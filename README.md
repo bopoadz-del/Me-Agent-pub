@@ -92,19 +92,21 @@ curl -s -X POST http://localhost:8000/mission \
        "attached_evidence": [{"type": "txt", "path": "/data/evidence/my-job/tariff.txt"}]}'
 ```
 
-Read the result with `GET /mission/{mission_id}` (same header). While it runs
-you get `"status": "queued"`; when it is done the body carries `result`: the
-`status` (`success`, `partial` or `failure`), each step's output, the
-`citations` (the exact evidence lines used) and a `confidence`.
+Read the result with `GET /mission/{mission_id}` (same header). Poll until
+the body carries `result`: before that it says `"status": "queued"` (waiting
+for a worker) or `"running"` (with the latest `checkpoint`). `result` holds
+the outcome `status` (`success`, `partial` or `failure`), each step's output,
+the `citations` (the exact evidence lines used) and a `confidence`.
 
 `domain_hint` names the kit to use. Leave it out and the agent chooses among every kit's blocks by the
 words of the task.
 
 ## Grounding and refusal
 
-- Every number or word in a result must appear in a cited line of your
-  evidence, beside its own label (a column header counts). If one value is
-  not held by any line, the step is refused and the reason names the field.
+- Every value in a result must appear in a cited line of your evidence: a
+  number beside its own label (a column header counts), a word as a whole
+  word. If one value is not held by any line, the step is refused and the
+  reason names the field.
 - A value a kit defines by a formula (for example `berth_fee_usd = dwell_hours
   * base_rate_usd_per_hour`) is computed from the cited operands, not taken
   from the model.
