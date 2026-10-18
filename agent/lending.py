@@ -39,6 +39,8 @@ ROUTE_ACCESS: dict[tuple[str, str], str] = {
     ("POST", "/lend/redeem"): "public",
     ("POST", "/lend/{grant_id}/revoke"): "owner",
     ("GET", "/lend/{grant_id}/usage"): "mission:read",
+    ("GET", "/lend/{grant_id}/usage/summary"): "mission:read",
+    ("GET", "/lend/{grant_id}/usage/export"): "mission:read",
 }
 
 class GrantRefused(Exception):

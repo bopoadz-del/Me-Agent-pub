@@ -80,6 +80,17 @@ USAGE_OUTCOMES: dict[str, dict[str, Any]] = {
     "failed_by_agent": {"counts": False},
 }
 
+#: The billable units of a grant's usage summary and export (agent/metering.py):
+#: each sums one usage column ("*" counts missions), over the missions that
+#: count unless counted_only is False. A new unit is a row here, not code.
+METERING_UNITS: dict[str, dict[str, Any]] = {
+    "missions": {"column": "*", "counted_only": True},
+    "steps": {"column": "steps", "counted_only": True},
+    "tool_calls": {"column": "tool_calls", "counted_only": True},
+    "model_calls": {"column": "model_calls", "counted_only": True},
+    "model_tokens": {"column": "model_tokens", "counted_only": True},
+}
+
 #: Size bounds on what the agent and hive accept (operational constraints,
 #: spec Section 10: common.logging.OPERATIONAL_CONSTRAINTS includes them).
 INPUT_BOUNDS = {
@@ -98,6 +109,8 @@ INPUT_BOUNDS = {
     "max_grant_state_age_seconds": 120,
     #: Largest page GET /lend/{grant_id}/usage returns.
     "max_usage_list_page": 100,
+    #: Most usage rows one export returns; a larger window is refused.
+    "max_usage_export_rows": 10_000,
     "max_memory_value_kb": 256,
 }
 
