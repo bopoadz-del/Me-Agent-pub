@@ -182,6 +182,14 @@ def _numbers(text: str) -> list[float]:
     return out
 
 
+def _chunk_numbers(chunk: Chunk) -> list[float]:
+    """A table row's numbers are its cells' numbers: read as one line, side-by-side
+    cells ("360,162") would run together as a thousands-separated value."""
+    if chunk.cells:
+        return [n for _header, cell in chunk.cells for n in _numbers(cell)]
+    return _numbers(chunk.text)
+
+
 def _same(a: float, b: float) -> bool:
     return abs(a - b) <= 1e-9 * max(1.0, abs(a), abs(b))
 
@@ -274,7 +282,7 @@ def _formula_holders(expr: str, value: float, pool: list[int], chunks: list[Chun
     candidates: list[list[tuple[float, int]]] = []
     for name in names:
         found = [
-            (n, i) for i in pool for n in _numbers(chunks[i].text) if _holds_number(chunks[i], name, n)
+            (n, i) for i in pool for n in _chunk_numbers(chunks[i]) if _holds_number(chunks[i], name, n)
         ]
         if not found:
             return None
@@ -348,7 +356,7 @@ def _operand(name: str, upstream: Any, chunks: list[Chunk]) -> Optional[float]:
 
     walk(upstream)
     if not found:
-        found = {n for c in chunks for n in _numbers(c.text) if _holds_number(c, name, n)}
+        found = {n for c in chunks for n in _chunk_numbers(c) if _holds_number(c, name, n)}
     return found.pop() if len(found) == 1 else None
 
 
