@@ -96,6 +96,27 @@ jobs:
           make compile-domain
           python -m pytest tests/generated/ -v
 
+  readme-fresh-clone:
+    # The README's test steps, verbatim, as a public reader runs them: no
+    # PYTHONPATH, DATA_DIR or TEST_MODE from the job, a non-root user.
+    name: Fresh clone, README steps
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: README five-minute path, then the whole unit suite
+        run: |
+          python3.11 -m venv .venv
+          . .venv/bin/activate
+          pip install --require-hashes -r requirements.txt
+          pip install -e . --no-deps
+          python -m pytest tests/unit/test_supply_chain.py tests/unit/test_challenge_budget.py
+          python -m pytest tests/unit
+
   phase-b-live-e2e:
     name: Phase B live E2E (spec 11.4 step 7)
     needs: changes
