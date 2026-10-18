@@ -19,6 +19,7 @@ from common.models.schemas import AuthProof, BlockDef, HiveMessage
 from common.storage.db import open_db
 from hive import auth as hive_auth
 from hive import blocks as hive_blocks
+from hive import lending as hive_lending
 from hive import sync as hive_sync
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +50,19 @@ MESSAGE_PAYLOAD_MAX_BYTES = 64 * 1024
 class MessageBody(BaseModel):
     target_agent_id: str
     payload: dict[str, Any]
+
+
+class LendBody(BaseModel):
+    agent_id: str
+    borrower: str
+    scopes: list[str]
+    domains: list[str]
+    ttl_seconds: int
+    max_missions: int
+
+
+class RedeemBody(BaseModel):
+    code: str
 
 
 def create_app(
@@ -165,13 +179,31 @@ def create_app(
             await _publish(msg)
         return {"status": "ok", "changed": bool(changed)}
 
+    def _admin(claims: dict[str, Any]) -> None:
+        if claims.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="admin role required")
+
     @app.post("/lend")
-    async def lend() -> JSONResponse:
-        return JSONResponse(status_code=501, content={"detail": "V2"})
+    async def lend(body: LendBody, claims: dict[str, Any] = Depends(bearer_claims)) -> dict[str, str]:
+        _admin(claims)
+        try:
+            return hive_lending.create_grant(app.state.db, **body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/lend/redeem")
-    async def lend_redeem() -> JSONResponse:
-        return JSONResponse(status_code=501, content={"detail": "V2"})
+    async def lend_redeem(body: RedeemBody) -> dict[str, str]:
+        try:
+            return hive_lending.redeem(app.state.db, body.code)
+        except hive_lending.GrantRefused as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.post("/lend/{grant_id}/revoke")
+    async def lend_revoke(grant_id: str, claims: dict[str, Any] = Depends(bearer_claims)) -> dict[str, str]:
+        _admin(claims)
+        if not hive_lending.revoke(app.state.db, grant_id):
+            raise HTTPException(status_code=404, detail="no such grant")
+        return {"status": "revoked", "grant_id": grant_id}
 
     @app.post("/billing/{path:path}")
     async def billing_any(path: str) -> JSONResponse:
