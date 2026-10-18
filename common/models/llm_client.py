@@ -128,10 +128,41 @@ class MockLLMClient(LLMClient):
         }
 
 
+class ReplayLLMClient(LLMClient):
+    """Test seam: model replies from a data file, for runs with no model server.
+
+    The file is {"replies": [{"when_all": [str, ...], "reply": {...}}, ...]}.
+    A request is answered by the first entry whose strings all appear in its
+    prompt or system text. A request no entry matches raises LookupError: a
+    changed prompt fails loudly instead of passing on a stale default."""
+
+    def __init__(self, path: str | Path) -> None:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        self._replies = [
+            ([str(s) for s in entry["when_all"]], entry["reply"]) for entry in data["replies"]
+        ]
+
+    def generate(self, prompt: str, system: str, format: Any = "json") -> dict:
+        text = f"{system}\n{prompt}"
+        for needles, reply in self._replies:
+            if all(n in text for n in needles):
+                return json.loads(json.dumps(reply))
+        raise LookupError("no recorded reply matches this request")
+
+
+def replay_client_from_env() -> Optional[ReplayLLMClient]:
+    """The replay client when LLM_CLIENT=replay (file from LLM_REPLAY_FILE)."""
+    import os
+
+    if os.environ.get("LLM_CLIENT", "").lower() != "replay":
+        return None
+    return ReplayLLMClient(os.environ["LLM_REPLAY_FILE"])
+
+
 def build_llm_client() -> LLMClient:
     import os
 
     mode = os.environ.get("LLM_CLIENT", "ollama").lower()
     if mode == "mock":
         return MockLLMClient()
-    return OllamaClient()
+    return replay_client_from_env() or OllamaClient()
