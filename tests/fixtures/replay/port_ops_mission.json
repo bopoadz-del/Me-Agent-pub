@@ -1,5 +1,5 @@
 {
-  "_doc": "Model replies for the replay smoke (LLM_CLIENT=replay). Each entry answers the first request whose prompt+system contains every 'when_all' string; a request no entry matches is an error, never a default. Replies are in the shape the block's reply format asks for; the agent still grounds every value against the attached evidence, so a wrong reply here fails the smoke.",
+  "_doc": "Model replies for the replay smoke (LLM_CLIENT=replay). Each entry answers the first request whose prompt+system contains every 'when_all' string; a request no entry matches is an error, never a default. Replies are in the shape the block's reply format asks for; the agent still grounds every value against the attached evidence: a value no evidence line holds fails the smoke, and a field the kit defines by a formula (berth_fee_usd) is recomputed from the cited operands, not taken from here.",
   "replies": [
     {
       "when_all": ["You are the port_terminal_tariffs_lookup "],
