@@ -3,6 +3,12 @@
 A self-hosted agent and its hive, running locally with docker compose on your
 own Ollama server. Nothing is hosted and no API key is needed.
 
+You give the agent a task in plain words plus the documents it may use. It
+answers only from those documents: every value it returns is cited from a
+line of your evidence, and a task it cannot ground is refused rather than
+guessed. What it knows how to do comes from **domain kits**, YAML sheets
+compiled into blocks (see below).
+
 ## What you need
 
 - **Python 3.11** (the package pins `>=3.11,<3.12`), for the tests and the
@@ -60,3 +66,63 @@ The model is named in one place: `config/model.env`.
 If your Ollama server is busy with another model or job, missions wait in the
 queue and report "waiting for the model server". The agent never evicts
 another model.
+
+## Give it a mission
+
+The agent's API is on http://localhost:8000. Every call needs the
+`AGENT_API_TOKEN` that `make up` wrote to `.env`, as a bearer token.
+
+The agent reads evidence only from its own data directory, so first copy your
+documents into the container:
+
+```sh
+docker compose exec -T agent-instance mkdir -p /data/evidence/my-job
+docker compose cp tariff.txt agent-instance:/data/evidence/my-job/tariff.txt
+```
+
+Then post the mission. The call returns at once with a `mission_id`; the
+mission runs in a queue.
+
+```sh
+TOKEN=$(sed -n 's/^AGENT_API_TOKEN=//p' .env)
+curl -s -X POST http://localhost:8000/mission \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"natural_language": "Calculate berth fee for a dry container using attached tariff evidence",
+       "domain_hint": "port_terminal",
+       "attached_evidence": [{"type": "txt", "path": "/data/evidence/my-job/tariff.txt"}]}'
+```
+
+Read the result with `GET /mission/{mission_id}` (same header). While it runs
+you get `"status": "queued"`; when it is done the body carries `result`: the
+`status` (`success`, `partial` or `failure`), each step's output, the
+`citations` (the exact evidence lines used) and a `confidence`.
+
+`domain_hint` names the kit to use. Leave it out and the agent chooses among every kit's blocks by the
+words of the task.
+
+## Grounding and refusal
+
+- Every number or word in a result must appear in a cited line of your
+  evidence, beside its own label (a column header counts). If one value is
+  not held by any line, the step is refused and the reason names the field.
+- A value a kit defines by a formula (for example `berth_fee_usd = dwell_hours
+  * base_rate_usd_per_hour`) is computed from the cited operands, not taken
+  from the model.
+- A mission whose kit needs evidence and that has none is refused, with
+  `confidence` 0.0, no citations, and a reason that says evidence is required.
+
+## Domain kits
+
+A kit is one YAML sheet in `domain-kits/sheets/`: lookup tables, calculations
+(with their formulas), decision rules and failure modes. The hive image and
+`make compile-domain` compile every sheet there into blocks; no kit is named
+in code. Two kits ship:
+
+- `port_ops.yaml` (domain `port_terminal`): berth tariff lookup, berth fee,
+  maximum dwell gate.
+- `concrete_mix.yaml` (domain `concrete_mix`): EN 206 Annex F exposure class
+  limits, water/cement ratio, exposure limit gate.
+
+To add a kit, add a sheet. `tests/unit/test_every_domain_kit.py` checks every
+sheet, and the live CI check (`tests/live/evidence_missions.json`) needs at
+least one evidence mission and one refusal for each kit's domain.
