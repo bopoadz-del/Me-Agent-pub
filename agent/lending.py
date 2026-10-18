@@ -13,13 +13,15 @@ is a later slice.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import secrets
 import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 import jwt
 
@@ -68,6 +70,24 @@ def _hash(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
+def _signing_key(owner_token: str) -> str:
+    """Borrower tokens are signed with a key derived from the owner token, never
+    with the owner token itself."""
+    return hmac.new(owner_token.encode("utf-8"), b"me-agent lending borrower tokens v1", hashlib.sha256).hexdigest()
+
+
+def evidence_dir(grant_id: str) -> str:
+    """The grant's own directory inside the evidence whitelist, by name."""
+    return f"grant-{grant_id}"
+
+
+def evidence_root(grant_id: str) -> Path:
+    """The grant's own directory inside the evidence whitelist, resolved."""
+    from agent.swarm.tools import _allowed_evidence_roots
+
+    return (_allowed_evidence_roots()[0] / evidence_dir(grant_id)).resolve()
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -87,6 +107,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS grant_missions (mission_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL)"
+    )
     conn.commit()
 
 
@@ -98,13 +121,22 @@ def create_grant(
     domains: list[str],
     ttl_seconds: int,
     max_missions: int,
+    known_domains: Optional[set[str]] = None,
 ) -> dict[str, str]:
     """Store a grant; return its id, the one-time redeem code and its expiry.
-    ValueError when a field is outside its bound."""
+    ValueError when a field is outside its bound. With ``known_domains`` (the
+    kits the agent has loaded), every domain must be one of them."""
     if not isinstance(scopes, list) or not scopes or not set(scopes) <= set(SCOPES):
         raise ValueError(f"scopes must be a non-empty subset of {list(SCOPES)}")
-    if not isinstance(domains, list) or not all(isinstance(d, str) and d for d in domains):
-        raise ValueError("domains must be a list of kit domain names")
+    if (
+        not isinstance(domains, list)
+        or not 1 <= len(domains) <= int(OPERATIONAL_CONSTRAINTS["max_grant_domains"])
+        or not all(isinstance(d, str) and d for d in domains)
+        or len(set(domains)) != len(domains)
+    ):
+        raise ValueError("domains must be 1..max_grant_domains distinct kit domain names")
+    if known_domains is not None and not set(domains) <= known_domains:
+        raise ValueError(f"unknown kit domains: {sorted(set(domains) - known_domains)}")
     if not 1 <= int(ttl_seconds) <= int(OPERATIONAL_CONSTRAINTS["max_grant_ttl_seconds"]):
         raise ValueError("ttl_seconds is outside 1..max_grant_ttl_seconds")
     if not 1 <= int(max_missions) <= int(OPERATIONAL_CONSTRAINTS["max_grant_missions"]):
@@ -168,7 +200,7 @@ def redeem(conn: sqlite3.Connection, code: str, key: str) -> dict[str, str]:
             "iat": int(now.timestamp()),
             "exp": int(exp.timestamp()),
         },
-        key,
+        _signing_key(key),
         algorithm=_ALGORITHM,
     )
     return {"token": token, "expires_at": exp.isoformat()}
@@ -177,7 +209,7 @@ def redeem(conn: sqlite3.Connection, code: str, key: str) -> dict[str, str]:
 def verify(conn: sqlite3.Connection, token: str, key: str) -> Grant:
     """The live grant a borrower token stands for; GrantRefused otherwise."""
     try:
-        claims = jwt.decode(token, key, algorithms=[_ALGORITHM], options={"require": ["exp", "grant", "epoch"]})
+        claims = jwt.decode(token, _signing_key(key), algorithms=[_ALGORITHM], options={"require": ["exp", "grant", "epoch"]})
     except jwt.PyJWTError as exc:
         raise GrantRefused(f"token not valid: {exc}") from exc
     now = _now()
@@ -195,6 +227,27 @@ def verify(conn: sqlite3.Connection, token: str, key: str) -> Grant:
         max_missions=row["max_missions"],
         missions_used=row["missions_used"],
     )
+
+
+def claim_mission(conn: sqlite3.Connection, grant_id: str, mission_id: str) -> bool:
+    """Count one mission against the grant's quota and record it as the grant's;
+    False when the quota is spent."""
+    ensure_schema(conn)
+    took = conn.execute(
+        "UPDATE grants SET missions_used = missions_used + 1 WHERE grant_id = ? AND missions_used < max_missions",
+        (grant_id,),
+    ).rowcount
+    if took == 1:
+        conn.execute("INSERT INTO grant_missions(mission_id, grant_id) VALUES (?, ?)", (mission_id, grant_id))
+    conn.commit()
+    return took == 1
+
+
+def mission_grant(conn: sqlite3.Connection, mission_id: str) -> Optional[str]:
+    """The grant a mission was run under; None for the owner's own missions."""
+    ensure_schema(conn)
+    row = conn.execute("SELECT grant_id FROM grant_missions WHERE mission_id = ?", (mission_id,)).fetchone()
+    return row[0] if row is not None else None
 
 
 def revoke(conn: sqlite3.Connection, grant_id: str) -> bool:

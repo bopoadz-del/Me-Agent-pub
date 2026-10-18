@@ -26,7 +26,12 @@ from agent.memory import LocalStore, Retriever, SyncEngine
 from agent.orchestrator.engine import HeadlessOrchestrator, disk_over_limit
 from agent.swarm.registry import BlockRegistry
 from agent.swarm.spawner import SubAgentSpawner
-from agent.swarm.tools import evidence_file, intake_evidence, list_evidence, store_upload
+from agent.swarm.tools import (
+    evidence_file,
+    intake_evidence,
+    list_evidence,
+    store_upload,
+)
 from common.http_limits import REQUEST_BODY_MAX_BYTES, BodySizeLimit
 from common.logging import OPERATIONAL_CONSTRAINTS, get_logger
 from agent.model_server import ModelServerGate
@@ -249,6 +254,33 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
         if not secrets.compare_digest(token.encode(), api_token.encode()):
             raise HTTPException(status_code=401, detail="unauthorized")
 
+    def _caller(method: str, path: str):
+        """The route's caller: the owner (None) or a borrower's live grant. The
+        scope a borrower needs is the route's row in lending.ROUTE_ACCESS."""
+        scope = lending.ROUTE_ACCESS[(method, path)]
+
+        def dependency(authorization: Optional[str] = Header(default=None)) -> Optional[lending.Grant]:
+            if not authorization or not authorization.startswith("Bearer "):
+                raise HTTPException(status_code=401, detail="unauthorized")
+            token = authorization.split(" ", 1)[1].strip()
+            if secrets.compare_digest(token.encode(), api_token.encode()):
+                return None
+            try:
+                grant = lending.verify(runtime["store"].conn, token, api_token)
+            except lending.GrantRefused as exc:
+                raise HTTPException(status_code=401, detail="unauthorized") from exc
+            if scope not in grant.scopes:
+                raise HTTPException(status_code=403, detail=f"grant lacks scope {scope}")
+            return grant
+
+        return dependency
+
+    def _known_domains() -> Optional[set[str]]:
+        registry = runtime.get("registry")
+        if registry is None:
+            return None
+        return {block.domain for block in registry.all_blocks()}
+
     @app.post("/lend", dependencies=[Depends(_auth)])
     async def post_lend(body: LendBody) -> dict[str, str]:
         try:
@@ -259,6 +291,7 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
                 domains=body.domains,
                 ttl_seconds=body.ttl_seconds,
                 max_missions=body.max_missions,
+                known_domains=_known_domains(),
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -280,11 +313,23 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/mission", dependencies=[Depends(_auth)])
-    async def post_mission(payload: MissionCreateBody) -> dict[str, Any]:
+    @app.post("/mission")
+    async def post_mission(
+        payload: MissionCreateBody, grant: Optional[lending.Grant] = Depends(_caller("POST", "/mission"))
+    ) -> dict[str, Any]:
         # Re-read constraints at request time (subprocess env / seams).
         if disk_over_limit(_data_paths()[0]):
             raise HTTPException(status_code=429, detail="disk limit exceeded")
+        if grant is not None:
+            # A borrowed mission names a domain the grant allows and attaches only
+            # the grant's own evidence.
+            if payload.domain_hint not in grant.domains:
+                raise HTTPException(status_code=403, detail="domain_hint is not one the grant allows")
+            own = lending.evidence_root(grant.grant_id)
+            for item in payload.attached_evidence or []:
+                real = Path(os.path.realpath(str(item.get("path", ""))))
+                if not real.is_relative_to(own):
+                    raise HTTPException(status_code=403, detail="attached evidence is outside the grant")
         comms: CommsLink = runtime["comms"]
         max_depth = _mission_queue_max_depth()
         if hasattr(comms, "_max_depth"):
@@ -306,6 +351,8 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
             )
         except PermissionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if grant is not None and not lending.claim_mission(runtime["store"].conn, grant.grant_id, profile.mission_id):
+            raise HTTPException(status_code=403, detail="the grant's mission quota is spent")
         runtime["store"].last_profile = profile
         if not comms.enqueue(profile):
             raise HTTPException(status_code=429, detail="queue saturated")
@@ -313,41 +360,62 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
 
     # {name:path} so a name with a separator reaches the name rule and is refused
     # there (400), the same as every other bad name.
-    @app.post("/evidence/{name:path}", dependencies=[Depends(_auth)])
-    async def post_evidence(name: str, request: Request) -> dict[str, Any]:
+    @app.post("/evidence/{name:path}")
+    async def post_evidence(
+        name: str,
+        request: Request,
+        grant: Optional[lending.Grant] = Depends(_caller("POST", "/evidence/{name:path}")),
+    ) -> dict[str, Any]:
         # One document as the raw body, under the same cap as every route; the
-        # reply is the path to attach to a mission.
+        # reply is the path to attach to a mission. A borrower's upload lands in
+        # its grant's own directory.
         if disk_over_limit(_data_paths()[0]):
             raise HTTPException(status_code=429, detail="disk limit exceeded")
         data = await request.body()
         try:
-            path = store_upload(name, data)
+            path = store_upload(name, data, under=lending.evidence_dir(grant.grant_id) if grant else None)
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=415, detail="evidence must be UTF-8 text") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"path": str(path), "type": path.suffix.lstrip(".").lower() or "txt", "bytes": len(data)}
 
-    @app.get("/evidence", dependencies=[Depends(_auth)])
-    async def get_evidence_list(offset: int = 0, limit: Optional[int] = None) -> dict[str, Any]:
+    @app.get("/evidence")
+    async def get_evidence_list(
+        offset: int = 0,
+        limit: Optional[int] = None,
+        grant: Optional[lending.Grant] = Depends(_caller("GET", "/evidence")),
+    ) -> dict[str, Any]:
         max_page = int(OPERATIONAL_CONSTRAINTS["max_evidence_list_page"])
         limit = max_page if limit is None else limit
         if offset < 0 or not 1 <= limit <= max_page:
             raise HTTPException(status_code=422, detail=f"offset >= 0 and 1 <= limit <= {max_page}")
         every = list_evidence()
+        if grant is not None:
+            own = lending.evidence_root(grant.grant_id)
+            every = [entry for entry in every if entry[1].is_relative_to(own)]
         items = [{"ref": ref, "path": str(path), "bytes": size} for ref, path, size in every[offset:offset + limit]]
         return {"items": items, "total": len(every), "offset": offset, "limit": limit}
 
-    @app.get("/evidence/{ref:path}", dependencies=[Depends(_auth)])
-    async def get_evidence_file(ref: str) -> FileResponse:
+    @app.get("/evidence/{ref:path}")
+    async def get_evidence_file(
+        ref: str, grant: Optional[lending.Grant] = Depends(_caller("GET", "/evidence/{ref:path}"))
+    ) -> FileResponse:
         try:
-            return FileResponse(evidence_file(ref))
+            path = evidence_file(ref)
+            if grant is not None and not path.is_relative_to(lending.evidence_root(grant.grant_id)):
+                raise FileNotFoundError(ref)
+            return FileResponse(path)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="not found") from exc
 
-    @app.get("/mission/{mission_id}", dependencies=[Depends(_auth)])
-    async def get_mission(mission_id: str) -> dict[str, Any]:
+    @app.get("/mission/{mission_id}")
+    async def get_mission(
+        mission_id: str, grant: Optional[lending.Grant] = Depends(_caller("GET", "/mission/{mission_id}"))
+    ) -> dict[str, Any]:
         store = runtime["store"]
+        if grant is not None and lending.mission_grant(store.conn, mission_id) != grant.grant_id:
+            raise HTTPException(status_code=404, detail="not found")
         row = store.conn.execute(
             "SELECT status, checkpoint FROM missions WHERE mission_id = ?",
             (mission_id,),
