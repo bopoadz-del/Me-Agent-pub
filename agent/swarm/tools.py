@@ -155,7 +155,7 @@ def evidence_file(ref: str) -> Path:
     """The whitelist file a reference names; FileNotFoundError for anything
     that does not resolve to a file inside the whitelist."""
     root = _allowed_evidence_roots()[0]
-    if not ref or Path(ref).is_absolute() or "\\" in ref:
+    if not ref or "\x00" in ref or Path(ref).is_absolute() or "\\" in ref:
         raise FileNotFoundError(ref)
     real = Path(os.path.realpath(root / ref))
     if not _under(real, [root]) or not real.is_file():
