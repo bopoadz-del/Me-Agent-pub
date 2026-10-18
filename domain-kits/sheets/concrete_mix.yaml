@@ -1,0 +1,123 @@
+# Concrete mix design domain kit: EN 206 durability limits for a mix.
+# Rows are the recommended limiting values of EN 206 Annex F (Table F.1,
+# informative). A project's specification or national annex may set others;
+# the evidence attached to a mission is what the kit answers from.
+domain: concrete_mix
+version: "1.0"
+description: >
+  Exposure class limit lookup, water/cement ratio calculation, and the
+  exposure limit gate for a concrete mix design.
+
+data_tables:
+  - name: exposure_classes
+    description: Recommended limiting values per exposure class (EN 206 Annex F).
+    columns:
+      - name: exposure_class
+        type: string
+      - name: max_water_cement_ratio
+        type: number
+      - name: min_cement_content_kg_per_m3
+        type: number
+      - name: min_strength_class
+        type: string
+    rows:
+      - exposure_class: XC1
+        max_water_cement_ratio: 0.65
+        min_cement_content_kg_per_m3: 260
+        min_strength_class: C20/25
+      - exposure_class: XC2
+        max_water_cement_ratio: 0.60
+        min_cement_content_kg_per_m3: 280
+        min_strength_class: C25/30
+      - exposure_class: XC3
+        max_water_cement_ratio: 0.55
+        min_cement_content_kg_per_m3: 280
+        min_strength_class: C30/37
+      - exposure_class: XC4
+        max_water_cement_ratio: 0.50
+        min_cement_content_kg_per_m3: 300
+        min_strength_class: C30/37
+      - exposure_class: XD1
+        max_water_cement_ratio: 0.55
+        min_cement_content_kg_per_m3: 300
+        min_strength_class: C30/37
+      - exposure_class: XS1
+        max_water_cement_ratio: 0.50
+        min_cement_content_kg_per_m3: 300
+        min_strength_class: C30/37
+    lookup_key: exposure_class
+    tools:
+      - file_reader
+    evidence_standard: >
+      Every limit used must appear verbatim in the attached specification
+      or limits evidence (txt/csv). Refuse if the exposure class is absent
+      from evidence.
+
+calculations:
+  - name: water_cement_ratio
+    description: Water/cement ratio of a mix from its free water and cement contents.
+    formula: "water_cement_ratio = free_water_kg_per_m3 / cement_kg_per_m3"
+    inputs:
+      - name: free_water_kg_per_m3
+        type: number
+      - name: cement_kg_per_m3
+        type: number
+    outputs:
+      - name: water_cement_ratio
+        type: number
+    tools:
+      - calculator
+      - file_reader
+    evidence_standard: >
+      free_water_kg_per_m3 and cement_kg_per_m3 must be grounded in attached
+      mix design evidence before returning a ratio.
+
+decision_rules:
+  - name: exposure_limit
+    description: Gate a mix whose water/cement ratio exceeds its exposure class limit.
+    condition: "water_cement_ratio <= max_water_cement_ratio"
+    inputs:
+      - name: water_cement_ratio
+        type: number
+      - name: max_water_cement_ratio
+        type: number
+    output_schema:
+      type: object
+      required: [allowed, reason]
+      properties:
+        allowed:
+          type: boolean
+        reason:
+          type: string
+      additionalProperties: false
+    tools:
+      - calculator
+    evidence_standard: >
+      water_cement_ratio and max_water_cement_ratio must be cited from
+      attached evidence before allowing or denying the gate.
+
+failure_modes:
+  - name: missing_mix_evidence
+    description: >
+      Refuse the water/cement ratio when mix design evidence is missing or
+      does not state both the free water and the cement content.
+    trigger: >
+      attached_evidence is empty OR free water or cement content not found
+      in any evidence excerpt
+    expected_behavior: >
+      Return ExecutionResult status=failure with empty citations and a
+      reason naming the missing evidence field.
+    asserts:
+      - "refuse when attached_evidence is empty"
+      - "refuse when the cement content is absent from evidence text"
+  - name: missing_exposure_limit_evidence
+    description: >
+      Refuse the exposure limit gate when the limits evidence does not
+      contain the mix's exposure class.
+    trigger: >
+      exposure_class not found in any evidence excerpt
+    expected_behavior: >
+      Return ExecutionResult status=failure with empty citations and a
+      reason naming the missing exposure class.
+    asserts:
+      - "refuse when the exposure class is absent from evidence text"

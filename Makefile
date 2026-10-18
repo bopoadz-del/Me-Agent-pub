@@ -24,8 +24,12 @@ test-e2e:
 
 test: detect test-unit test-integration test-e2e
 
+# Every sheet, as the hive image compiles them; no kit is named here.
 compile-domain:
-	python3 -m domain_kits.compiler.engine --sheet domain-kits/sheets/port_ops.yaml
+	for sheet in domain-kits/sheets/*.yaml domain-kits/sheets/*.yml; do \
+		[ -f "$$sheet" ] || continue; \
+		python3 -m domain_kits.compiler.engine --sheet "$$sheet" || exit 1; \
+	done
 
 # Phase B: runs in CI (job "Phase B verify-airgap"). Needs Linux + Docker.
 verify-airgap:
