@@ -82,7 +82,7 @@ def test_both_routes_need_the_token(client):
     assert c.get(f"/evidence/{ref}").status_code == 401
 
 
-@pytest.mark.parametrize("ref", ["missing.txt", "..%2Fagent.db", "%2E%2E/agent.db", "%2Fetc%2Fpasswd", "upload-x/../../agent.db"])
+@pytest.mark.parametrize("ref", ["missing.txt", "..%2Fagent.db", "%2E%2E/agent.db", "%2Fetc%2Fpasswd", "upload-x/../../agent.db", "a%00b.txt"])
 def test_a_reference_outside_the_whitelist_or_absent_is_a_404(client, ref):
     c, tmp = client
     (tmp / "data").mkdir(parents=True, exist_ok=True)
