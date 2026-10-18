@@ -72,15 +72,30 @@ another model.
 The agent's API is on http://localhost:8000. Every call needs the
 `AGENT_API_TOKEN` that `make up` wrote to `.env`, as a bearer token.
 
-The agent reads evidence only from its own data directory, so first copy your
-documents into the container:
+The agent reads evidence only from its own data directory. Upload each
+document there over the API: the body is the file itself (UTF-8 text, up to
+1 MB), the path segment its file name. The reply's `path` is what you attach
+to the mission.
+
+```sh
+TOKEN=$(sed -n 's/^AGENT_API_TOKEN=//p' .env)
+curl -s -X POST http://localhost:8000/evidence/tariff.txt \
+  -H "Authorization: Bearer $TOKEN" --data-binary @tariff.txt
+# {"path": "/data/evidence/upload-<id>/tariff.txt", "type": "txt", "bytes": 52}
+```
+
+Each upload gets a directory of its own, so two files of one name never
+overwrite each other. A name with a directory part, a leading dot or dash, an
+empty body or a body that is not UTF-8 text is refused. For a larger file,
+copy it into the container instead:
 
 ```sh
 docker compose exec -T agent-instance mkdir -p /data/evidence/my-job
 docker compose cp tariff.txt agent-instance:/data/evidence/my-job/tariff.txt
 ```
 
-Then post the mission. The call returns at once with a `mission_id`; the
+Then post the mission, attaching the `path` you got back (or the path you
+copied to). The call returns at once with a `mission_id`; the
 mission runs in a queue.
 
 ```sh
@@ -89,7 +104,7 @@ curl -s -X POST http://localhost:8000/mission \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"natural_language": "Calculate berth fee for a dry container using attached tariff evidence",
        "domain_hint": "port_terminal",
-       "attached_evidence": [{"type": "txt", "path": "/data/evidence/my-job/tariff.txt"}]}'
+       "attached_evidence": [{"type": "txt", "path": "/data/evidence/upload-<id>/tariff.txt"}]}'
 ```
 
 Read the result with `GET /mission/{mission_id}` (same header). Poll until
