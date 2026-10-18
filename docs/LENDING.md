@@ -14,12 +14,13 @@ and never sees the owner's evidence or missions.
 ## What exists today
 
 - The agent API has one bearer token (`AGENT_API_TOKEN`). Whoever holds it
-  can do everything: post missions, read every mission, upload, list and
-  read all evidence.
-- The hive signs session tokens (JWT with `sub`, `role`, `exp`, `jti`). Each
-  agent has one live session, and a second login gets 409. Admin tokens are
-  revoked as a group by advancing an epoch (`hive/auth.py`
-  `advance_admin_epoch`).
+  can do everything the API offers: post missions and read every mission.
+  The evidence routes in progress (upload, list, fetch) take the same token.
+- The hive signs session tokens (JWT with `sub`, `role`, `exp`, `jti`). It
+  lets one agent be active at a time: while one agent holds the lease, a
+  login by another agent gets 409 ("single-agent limit"); the same agent
+  logging in again takes a new session. Admin tokens are revoked as a group
+  by advancing an epoch (`hive/auth.py` `advance_admin_epoch`).
 
 ## The grant
 
