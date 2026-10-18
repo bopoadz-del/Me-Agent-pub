@@ -15,7 +15,7 @@ from agent.swarm.grounding import build_prompt, chunk_evidence, parse_reply, rep
 from agent.swarm.registry import BlockRegistry
 from agent.swarm.tools import TOOL_REGISTRY, AirGapError
 from common.logging import OPERATIONAL_CONSTRAINTS, get_logger
-from common.models.llm_client import MockLLMClient, OllamaClient, configured_model
+from common.models.llm_client import MockLLMClient, OllamaClient, configured_model, replay_client_from_env
 from common.models.schemas import BlockDef, PlanStep, StepOutput
 
 _logger = get_logger("agent.spawner")
@@ -31,6 +31,8 @@ _SCRUB_ALLOWED = (
     "DATA_DIR",
     "OLLAMA_URL",
     "OLLAMA_MODEL",
+    "LLM_CLIENT",
+    "LLM_REPLAY_FILE",
 )
 
 
@@ -48,6 +50,9 @@ def _scrubbed_env(source: Optional[dict[str, str]] = None) -> dict[str, str]:
 
 
 def _child_llm():
+    replay = replay_client_from_env()
+    if replay is not None:
+        return replay
     if os.environ.get("TEST_MODE", "").lower() == "true":
         return MockLLMClient()
     return OllamaClient(model=configured_model())

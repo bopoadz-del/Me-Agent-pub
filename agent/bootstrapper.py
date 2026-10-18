@@ -28,7 +28,7 @@ from agent.swarm.tools import intake_evidence
 from common.http_limits import REQUEST_BODY_MAX_BYTES, BodySizeLimit
 from common.logging import OPERATIONAL_CONSTRAINTS, get_logger
 from agent.model_server import ModelServerGate
-from common.models.llm_client import MockLLMClient, OllamaClient, configured_model
+from common.models.llm_client import MockLLMClient, OllamaClient, configured_model, replay_client_from_env
 from common.models.schemas import BlockDef, MemoryDelta, MissionProfile, SessionGrant
 
 _logger = get_logger("agent.bootstrapper")
@@ -55,10 +55,11 @@ def _mission_queue_max_depth() -> int:
 
 
 def _build_llm():
-    """MockLLM when LLM_CLIENT=mock; otherwise the configured local model."""
+    """MockLLM when LLM_CLIENT=mock, replayed replies when LLM_CLIENT=replay;
+    otherwise the configured local model."""
     if os.environ.get("LLM_CLIENT", "").lower() == "mock":
         return MockLLMClient()
-    return OllamaClient(model=configured_model())
+    return replay_client_from_env() or OllamaClient(model=configured_model())
 
 
 
@@ -100,8 +101,8 @@ def _validate_env() -> None:
         if _require_secret("AGENT_SECRET") == api_token:
             _fail("AGENT_SECRET and AGENT_API_TOKEN must be different keys")
     test_mode = os.environ.get("TEST_MODE", "").lower() == "true"
-    if os.environ.get("LLM_CLIENT", "").lower() == "mock" and not test_mode:
-        _fail("LLM_CLIENT=mock requires TEST_MODE=true")
+    if os.environ.get("LLM_CLIENT", "").lower() in ("mock", "replay") and not test_mode:
+        _fail(f"LLM_CLIENT={os.environ['LLM_CLIENT'].lower()} requires TEST_MODE=true")
     if os.environ.get("INPROCESS_BROKER", "").lower() == "true" and not test_mode:
         _fail("INPROCESS_BROKER requires TEST_MODE=true")
 
