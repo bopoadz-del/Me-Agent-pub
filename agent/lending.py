@@ -13,7 +13,6 @@ is a later slice.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import secrets
 import sqlite3
@@ -23,12 +22,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-import jwt
-
+from common import lending_tokens
+from common.lending_tokens import SCOPES  # noqa: F401  (re-exported for callers)
 from common.logging import OPERATIONAL_CONSTRAINTS
-
-#: What a grant can let a borrower do.
-SCOPES = ("mission:submit", "mission:read", "evidence:upload", "evidence:read")
 
 #: Every route the agent serves: open to anyone, owner-only, or the scope a
 #: borrower needs. A route missing here fails tests/unit/test_lending_grants.py.
@@ -43,9 +39,6 @@ ROUTE_ACCESS: dict[tuple[str, str], str] = {
     ("POST", "/lend/redeem"): "public",
     ("POST", "/lend/{grant_id}/revoke"): "owner",
 }
-
-_ALGORITHM = "HS256"
-
 
 class GrantRefused(Exception):
     """A code or token that does not stand for a live grant."""
@@ -68,12 +61,6 @@ def _now() -> datetime:
 
 def _hash(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
-
-
-def _signing_key(owner_token: str) -> str:
-    """Borrower tokens are signed with a key derived from the owner token, never
-    with the owner token itself."""
-    return hmac.new(owner_token.encode("utf-8"), b"me-agent lending borrower tokens v1", hashlib.sha256).hexdigest()
 
 
 def evidence_dir(grant_id: str) -> str:
@@ -126,21 +113,7 @@ def create_grant(
     """Store a grant; return its id, the one-time redeem code and its expiry.
     ValueError when a field is outside its bound. With ``known_domains`` (the
     kits the agent has loaded), every domain must be one of them."""
-    if not isinstance(scopes, list) or not scopes or not set(scopes) <= set(SCOPES):
-        raise ValueError(f"scopes must be a non-empty subset of {list(SCOPES)}")
-    if (
-        not isinstance(domains, list)
-        or not 1 <= len(domains) <= int(OPERATIONAL_CONSTRAINTS["max_grant_domains"])
-        or not all(isinstance(d, str) and d for d in domains)
-        or len(set(domains)) != len(domains)
-    ):
-        raise ValueError("domains must be 1..max_grant_domains distinct kit domain names")
-    if known_domains is not None and not set(domains) <= known_domains:
-        raise ValueError(f"unknown kit domains: {sorted(set(domains) - known_domains)}")
-    if not 1 <= int(ttl_seconds) <= int(OPERATIONAL_CONSTRAINTS["max_grant_ttl_seconds"]):
-        raise ValueError("ttl_seconds is outside 1..max_grant_ttl_seconds")
-    if not 1 <= int(max_missions) <= int(OPERATIONAL_CONSTRAINTS["max_grant_missions"]):
-        raise ValueError("max_missions is outside 1..max_grant_missions")
+    lending_tokens.check_fields(scopes, domains, ttl_seconds, max_missions, known_domains)
     ensure_schema(conn)
     now = _now()
     grant_id = uuid.uuid4().hex
@@ -188,10 +161,9 @@ def redeem(conn: sqlite3.Connection, code: str, key: str) -> dict[str, str]:
         raise GrantRefused("code already redeemed")
     ttl = int(OPERATIONAL_CONSTRAINTS["borrower_token_ttl_seconds"])
     exp = min(now + timedelta(seconds=ttl), datetime.fromisoformat(row["expires_at"]))
-    token = jwt.encode(
+    token = lending_tokens.encode(
         {
             "sub": f"grant:{row['grant_id']}",
-            "role": "borrower",
             "grant": row["grant_id"],
             "scope": json.loads(row["scopes"]),
             "domains": json.loads(row["domains"]),
@@ -200,8 +172,7 @@ def redeem(conn: sqlite3.Connection, code: str, key: str) -> dict[str, str]:
             "iat": int(now.timestamp()),
             "exp": int(exp.timestamp()),
         },
-        _signing_key(key),
-        algorithm=_ALGORITHM,
+        key,
     )
     return {"token": token, "expires_at": exp.isoformat()}
 
@@ -209,11 +180,11 @@ def redeem(conn: sqlite3.Connection, code: str, key: str) -> dict[str, str]:
 def verify(conn: sqlite3.Connection, token: str, key: str) -> Grant:
     """The live grant a borrower token stands for; GrantRefused otherwise."""
     try:
-        claims = jwt.decode(token, _signing_key(key), algorithms=[_ALGORITHM], options={"require": ["exp", "grant", "epoch"]})
-    except jwt.PyJWTError as exc:
-        raise GrantRefused(f"token not valid: {exc}") from exc
+        claims = lending_tokens.decode(token, key)
+    except lending_tokens.TokenRefused as exc:
+        raise GrantRefused(str(exc)) from exc
     now = _now()
-    if claims.get("role") != "borrower" or claims["exp"] <= now.timestamp():
+    if claims["exp"] <= now.timestamp():
         raise GrantRefused("not a live borrower token")
     row = _row(conn, "grant_id", str(claims["grant"]))
     if not _live(row, now) or row["epoch"] != claims["epoch"]:

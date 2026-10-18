@@ -1,7 +1,10 @@
 # Lending an agent: design
 
-Status: slice 1 in progress (issue #12). `POST /lend` and `POST /lend/redeem`
-on the hive still return 501 ("V2").
+Status: slice 1 done (#12, #15, #17). Slice 2 (issue #19), part A built: the
+hive holds grants (`hive/lending.py`); `POST /lend` and `POST
+/lend/{grant_id}/revoke` take the admin role, `POST /lend/redeem` turns a code
+into a borrower token for the grant's agent. Part B (the agent accepts those
+tokens and pulls revocations on its heartbeat) is next.
 
 **Slice 1 differs from the design below in one way:** the grants live in the
 agent's own store (`agent/lending.py`), and the agent signs and verifies its
@@ -97,10 +100,12 @@ successful pull (fail closed).
 
 ## Open decisions
 
-- **Signing.** The hive signs with a shared HMAC key (`HIVE_JWT_KEY`) today.
-  For the agent to verify borrower tokens without holding the hive's signing
-  key, borrower tokens should be signed with a key pair: the hive keeps the
-  private key, the agent holds the public one.
+- **Signing (decided in slice 2, #19).** A key pair would add a native
+  dependency to the hash-locked requirements and every image. Instead the hive
+  signs each borrower token with a key derived from the enrolment secret of
+  the agent the grant names (`common/lending_tokens.py`). The hive and that
+  agent already share the secret; the agent verifies its own borrowers'
+  tokens, no other agent can, and no agent holds the hive's `HIVE_JWT_KEY`.
 - **Metering.** Counting missions per grant is in scope. Charging for them
   (`/billing/*`) stays V2.
 
