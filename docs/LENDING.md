@@ -1,8 +1,20 @@
 # Lending an agent: design
 
-Status: design only. `POST /lend` and `POST /lend/redeem` on the hive return
-501 ("V2") today, and nothing here is built yet. This note fixes the shape
-before any code is written.
+Status: slice 1 in progress (issue #12). `POST /lend` and `POST /lend/redeem`
+on the hive still return 501 ("V2").
+
+**Slice 1 differs from the design below in one way:** the grants live in the
+agent's own store (`agent/lending.py`), and the agent signs and verifies its
+borrower tokens itself, with its owner token as the key. That needs no hive
+change and no key distribution. Moving grants to the hive, with the
+asymmetric signing described under "Open decisions", is a later slice.
+
+- Part A, built: `POST /lend` (owner only), `POST /lend/redeem` (the code
+  once, for a borrower token), `POST /lend/{grant_id}/revoke` (owner only,
+  advances the epoch), and the route-to-scope table, which covers every route.
+  Borrower tokens open no data route yet.
+- Part B, next: borrower access to the mission and evidence routes, with
+  per-grant isolation, domain and quota checks.
 
 ## What lending means
 

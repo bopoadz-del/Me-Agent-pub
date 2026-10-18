@@ -78,6 +78,11 @@ INPUT_BOUNDS = {
     "max_evidence_items": 50,
     "max_evidence_file_mb": 50,
     "max_evidence_list_page": 100,
+    # Lending (docs/LENDING.md): the longest a grant may run, the most missions
+    # it may allow, and how long one borrower token lives.
+    "max_grant_ttl_seconds": 30 * 24 * 3600,
+    "max_grant_missions": 1000,
+    "borrower_token_ttl_seconds": 3600,
     "max_memory_value_kb": 256,
 }
 

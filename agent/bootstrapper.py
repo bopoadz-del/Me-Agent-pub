@@ -20,6 +20,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from agent import lending
 from agent.comms import CommsLink
 from agent.memory import LocalStore, Retriever, SyncEngine
 from agent.orchestrator.engine import HeadlessOrchestrator, disk_over_limit
@@ -34,6 +35,18 @@ from common.models.schemas import BlockDef, MemoryDelta, MissionProfile, Session
 
 _logger = get_logger("agent.bootstrapper")
 _RUNTIME: dict[str, Any] = {}
+
+
+class LendBody(BaseModel):
+    borrower: str = Field(min_length=1, max_length=200)
+    scopes: list[str]
+    domains: list[str]
+    ttl_seconds: int
+    max_missions: int
+
+
+class RedeemBody(BaseModel):
+    code: str = Field(min_length=1, max_length=200)
 
 
 class MissionCreateBody(BaseModel):
@@ -235,6 +248,33 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
         token = authorization.split(" ", 1)[1].strip()
         if not secrets.compare_digest(token.encode(), api_token.encode()):
             raise HTTPException(status_code=401, detail="unauthorized")
+
+    @app.post("/lend", dependencies=[Depends(_auth)])
+    async def post_lend(body: LendBody) -> dict[str, str]:
+        try:
+            return lending.create_grant(
+                runtime["store"].conn,
+                borrower=body.borrower,
+                scopes=body.scopes,
+                domains=body.domains,
+                ttl_seconds=body.ttl_seconds,
+                max_missions=body.max_missions,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/lend/redeem")
+    async def post_lend_redeem(body: RedeemBody) -> dict[str, str]:
+        try:
+            return lending.redeem(runtime["store"].conn, body.code, api_token)
+        except lending.GrantRefused as exc:
+            raise HTTPException(status_code=403, detail="code does not stand for a live grant") from exc
+
+    @app.post("/lend/{grant_id}/revoke", dependencies=[Depends(_auth)])
+    async def post_lend_revoke(grant_id: str) -> dict[str, str]:
+        if not lending.revoke(runtime["store"].conn, grant_id):
+            raise HTTPException(status_code=404, detail="not found")
+        return {"grant_id": grant_id, "status": "revoked"}
 
     @app.get("/health")
     async def health() -> dict[str, str]:
