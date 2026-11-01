@@ -121,8 +121,12 @@ longer ago than `max_grant_state_age_seconds`. Quota is counted by the agent.
   (`USAGE_OUTCOMES`): only customer-caused terminal states count, and a
   mission the agent refuses or fails gives its quota slot back.
   `GET /lend/{grant_id}/usage` shows the owner any grant and a borrower only
-  its own. Slice B adds a per-grant summary and a CSV/JSON export; no payment
-  provider is wired, the export is the contract.
+  its own. Slice B (#24): `GET /lend/{grant_id}/usage/summary` counts missions
+  by outcome and sums the billable units (`METERING_UNITS`, data) over the
+  missions that count; `GET /lend/{grant_id}/usage/export?format=csv|json`
+  gives the same window (`since`/`until` on each mission's end) with every
+  row, up to `max_usage_export_rows`. No payment provider is wired: the
+  export is the contract.
 
 ## Tests to write first, when this is built
 

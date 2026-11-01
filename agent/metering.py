@@ -10,15 +10,24 @@ triggers refuse both.
 """
 from __future__ import annotations
 
+import csv
+import io
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from common.models.schemas import USAGE_OUTCOMES, ExecutionResult
+from common.models.schemas import METERING_UNITS, USAGE_OUTCOMES, ExecutionResult
 
 USAGE_TABLE = "mission_usage"
 
 _COLUMNS = ("mission_id", "grant_id", "started_at", "ended_at", "steps", "tool_calls", "model_calls",
             "model_tokens", "outcome", "counted")
+
+#: The columns of a usage export, in order.
+EXPORT_COLUMNS = _COLUMNS
+
+#: A CSV cell starting with one of these runs as a formula in a spreadsheet.
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -123,3 +132,54 @@ def usage(conn: sqlite3.Connection, grant_id: str, limit: Optional[int] = None, 
 def count(conn: sqlite3.Connection, grant_id: str) -> int:
     ensure_schema(conn)
     return int(conn.execute(f"SELECT COUNT(*) FROM {USAGE_TABLE} WHERE grant_id = ?", (grant_id,)).fetchone()[0])
+
+
+def parse_instant(value: Optional[str]) -> Optional[datetime]:
+    """An ISO 8601 instant (UTC when it names no offset); ValueError otherwise."""
+    if value is None:
+        return None
+    instant = datetime.fromisoformat(value)
+    return instant if instant.tzinfo else instant.replace(tzinfo=timezone.utc)
+
+
+def window(
+    conn: sqlite3.Connection, grant_id: str, since: Optional[datetime] = None, until: Optional[datetime] = None
+) -> list[dict]:
+    """The grant's usage rows whose mission ended in [since, until)."""
+    return [
+        row for row in usage(conn, grant_id)
+        if (since is None or datetime.fromisoformat(row["ended_at"]) >= since)
+        and (until is None or datetime.fromisoformat(row["ended_at"]) < until)
+    ]
+
+
+def summary(rows: list[dict]) -> dict[str, Any]:
+    """Missions by outcome, and each METERING_UNITS unit summed over its rows.
+    A unit whose column no row reported (model tokens) is None."""
+    outcomes: dict[str, int] = {}
+    for row in rows:
+        outcomes[row["outcome"]] = outcomes.get(row["outcome"], 0) + 1
+    units: dict[str, Any] = {}
+    for name, unit in METERING_UNITS.items():
+        billed = [row for row in rows if row["counted"] or not unit.get("counted_only", True)]
+        if unit["column"] == "*":
+            units[name] = len(billed)
+            continue
+        values = [row[unit["column"]] for row in billed if row[unit["column"]] is not None]
+        units[name] = sum(values) if values else None
+    return {"missions": len(rows), "outcomes": outcomes, "units": units}
+
+
+def _cell(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(_FORMULA_START) else text
+
+
+def to_csv(rows: list[dict]) -> str:
+    """Usage rows as CSV, one line per row, formula-leading cells escaped."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(EXPORT_COLUMNS)
+    for row in rows:
+        writer.writerow([_cell(row.get(column)) for column in EXPORT_COLUMNS])
+    return out.getvalue()

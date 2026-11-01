@@ -18,7 +18,7 @@ from typing import Any, Optional
 import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from agent import lending, metering
@@ -381,6 +381,58 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
             raise HTTPException(status_code=429, detail="queue saturated")
         return {"mission_id": profile.mission_id, "status": "queued"}
 
+    def _usage_conn(grant: Optional[lending.Grant], grant_id: str) -> Any:
+        """The store, once the caller may read this grant's usage: the owner
+        any grant, a borrower only its own; any other is simply not there."""
+        conn = runtime["store"].conn
+        if grant is not None and grant.grant_id != grant_id:
+            raise HTTPException(status_code=404, detail="no such grant")
+        lending.ensure_schema(conn)
+        if conn.execute("SELECT 1 FROM grants WHERE grant_id = ?", (grant_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail="no such grant")
+        return conn
+
+    def _usage_window(conn: Any, grant_id: str, since: Optional[str], until: Optional[str]) -> list[dict]:
+        try:
+            start, end = metering.parse_instant(since), metering.parse_instant(until)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="since and until are ISO 8601 instants") from exc
+        return metering.window(conn, grant_id, start, end)
+
+    @app.get("/lend/{grant_id}/usage/summary")
+    async def get_lend_usage_summary(
+        grant_id: str,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        grant: Optional[lending.Grant] = Depends(_caller("GET", "/lend/{grant_id}/usage/summary")),
+    ) -> dict[str, Any]:
+        rows = _usage_window(_usage_conn(grant, grant_id), grant_id, since, until)
+        return {"grant_id": grant_id, "since": since, "until": until, **metering.summary(rows)}
+
+    @app.get("/lend/{grant_id}/usage/export")
+    async def get_lend_usage_export(
+        grant_id: str,
+        format: str = "json",
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        grant: Optional[lending.Grant] = Depends(_caller("GET", "/lend/{grant_id}/usage/export")),
+    ) -> Any:
+        # No payment provider is wired: this export is the invoicing contract.
+        if format not in ("json", "csv"):
+            raise HTTPException(status_code=422, detail="format is json or csv")
+        rows = _usage_window(_usage_conn(grant, grant_id), grant_id, since, until)
+        cap = int(OPERATIONAL_CONSTRAINTS["max_usage_export_rows"])
+        if len(rows) > cap:
+            raise HTTPException(status_code=422, detail=f"more than {cap} rows: narrow since/until")
+        if format == "csv":
+            return Response(
+                content=metering.to_csv(rows),
+                media_type="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="usage-{grant_id}.csv"'},
+            )
+        return {"grant_id": grant_id, "since": since, "until": until, "summary": metering.summary(rows),
+                "items": rows}
+
     @app.get("/lend/{grant_id}/usage")
     async def get_lend_usage(
         grant_id: str,
@@ -388,14 +440,7 @@ def _create_api(runtime: dict[str, Any]) -> FastAPI:
         limit: Optional[int] = None,
         grant: Optional[lending.Grant] = Depends(_caller("GET", "/lend/{grant_id}/usage")),
     ) -> dict[str, Any]:
-        # The owner reads any grant; a borrower only its own, and any other is
-        # simply not there.
-        conn = runtime["store"].conn
-        if grant is not None and grant.grant_id != grant_id:
-            raise HTTPException(status_code=404, detail="no such grant")
-        lending.ensure_schema(conn)
-        if conn.execute("SELECT 1 FROM grants WHERE grant_id = ?", (grant_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="no such grant")
+        conn = _usage_conn(grant, grant_id)
         max_page = int(OPERATIONAL_CONSTRAINTS["max_usage_list_page"])
         limit = max_page if limit is None else limit
         if offset < 0 or not 1 <= limit <= max_page:
